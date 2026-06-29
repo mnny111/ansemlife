@@ -5,7 +5,7 @@ import { appendSnapshot } from "@/lib/store";
 import { fetchAsterPosition } from "@/lib/aster";
 import { verifyBearer } from "@/lib/auth";
 
-export async function POST(req: Request) {
+async function runSnapshot(req: Request): Promise<Response> {
   const cfg = loadConfig(process.env);
   if (!verifyBearer(req.headers.get("authorization"), cfg.cronSecret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,4 +20,12 @@ export async function POST(req: Request) {
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "snapshot failed" }, { status: 502 });
   }
+}
+
+export async function GET(req: Request) {
+  return runSnapshot(req);
+}
+
+export async function POST(req: Request) {
+  return runSnapshot(req);
 }

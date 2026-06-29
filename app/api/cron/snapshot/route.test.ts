@@ -19,9 +19,9 @@ const snapshot = {
 };
 vi.mock("@/lib/aster", () => ({ fetchAsterPosition: async () => snapshot }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
-describe("/api/cron/snapshot", () => {
+describe("/api/cron/snapshot POST", () => {
   beforeEach(() => store.clear());
   it("rejects a bad secret", async () => {
     const res = await POST(new Request("http://t", { method: "POST", headers: { authorization: "Bearer nope" } }));
@@ -29,6 +29,21 @@ describe("/api/cron/snapshot", () => {
   });
   it("appends a snapshot with the correct secret", async () => {
     const res = await POST(new Request("http://t", { method: "POST", headers: { authorization: "Bearer cs" } }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.snapshot.symbol).toBe("ANSEMUSDT");
+    expect(store.get("ansemlife:snapshot-history")).toHaveLength(1);
+  });
+});
+
+describe("/api/cron/snapshot GET", () => {
+  beforeEach(() => store.clear());
+  it("rejects a bad bearer token", async () => {
+    const res = await GET(new Request("http://t", { method: "GET", headers: { authorization: "Bearer nope" } }));
+    expect(res.status).toBe(401);
+  });
+  it("appends a snapshot with the correct bearer token", async () => {
+    const res = await GET(new Request("http://t", { method: "GET", headers: { authorization: "Bearer cs" } }));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.snapshot.symbol).toBe("ANSEMUSDT");

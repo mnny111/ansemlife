@@ -3,7 +3,6 @@ import { loadConfig } from "@/lib/config";
 import { fetchRewardsBalance } from "@/lib/rewards";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 30;
 
 export async function GET() {
   try {

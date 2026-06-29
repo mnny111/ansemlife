@@ -3,7 +3,6 @@ import { loadConfig } from "@/lib/config";
 import { fetchTokenPrice } from "@/lib/price";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 30;
 
 export async function GET() {
   try {

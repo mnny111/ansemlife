@@ -6,7 +6,3 @@ export function usd(n: number | null): string {
 export function sol(n: number): string {
   return `${n.toFixed(4)} SOL`;
 }
-
-export function pct(n: number): string {
-  return `${n.toFixed(2)}%`;
-}

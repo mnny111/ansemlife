@@ -56,8 +56,10 @@ export async function fetchAsterPosition(
   const url = `${creds.baseUrl}/fapi/v2/positionRisk?${query}`;
   const res = await fetchImpl(url, { headers: { "X-MBX-APIKEY": creds.apiKey } });
   if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
-  const rows = (await res.json()) as unknown[];
-  const row = Array.isArray(rows) ? rows.find((x) => (x as { symbol?: string }).symbol === symbol) : undefined;
+  const rawData: unknown = await res.json();
+  const parsed = RawRowSchema.array().safeParse(rawData);
+  if (!parsed.success) throw new Error("AsterDex returned malformed positionRisk response");
+  const row = parsed.data.find((x) => x.symbol === symbol);
   if (!row) throw new Error(`AsterDex returned no position for ${symbol}`);
   return normalizePosition(row, timestamp);
 }
