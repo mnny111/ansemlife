@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { signQuery, normalizePosition, fetchAsterPosition } from "./aster";
+import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty } from "./aster";
 import { createHmac } from "node:crypto";
 
 describe("signQuery", () => {
@@ -80,5 +80,30 @@ describe("fetchAsterPosition", () => {
       fetchAsterPosition({ baseUrl: "https://x", apiKey: "ak", apiSecret: "sk" }, "ANSEMUSDT",
         { fetchImpl, nowMs: 1000 }),
     ).rejects.toThrow(/AsterDex returned no position for ANSEMUSDT/);
+  });
+});
+
+describe("roundToStep", () => {
+  it("floors to the step multiple", () => {
+    expect(roundToStep(12.3456, 0.001)).toBe(12.345);
+    expect(roundToStep(7, 1)).toBe(7);
+    expect(roundToStep(0.4, 1)).toBe(0);
+  });
+  it("returns 0 for a non-positive step", () => {
+    expect(roundToStep(5, 0)).toBe(0);
+  });
+});
+
+describe("computeDeployQty", () => {
+  it("sizes notional = balance*fraction*leverage / markPrice, floored to step", () => {
+    // 100 * 0.95 * 10 = 950 notional; /2 mark = 475 units; step 0.1 -> 475
+    expect(
+      computeDeployQty({ availableBalance: 100, deployFraction: 0.95, leverage: 10, markPrice: 2, step: 0.1 }),
+    ).toBe(475);
+  });
+  it("returns 0 when markPrice is non-positive", () => {
+    expect(
+      computeDeployQty({ availableBalance: 100, deployFraction: 0.95, leverage: 10, markPrice: 0, step: 0.1 }),
+    ).toBe(0);
   });
 });

@@ -64,3 +64,22 @@ export async function fetchAsterPosition(
   if (!row) throw new Error(`AsterDex returned no position for ${symbol}`);
   return normalizePosition(row, timestamp);
 }
+
+export function roundToStep(qty: number, step: number): number {
+  if (!(step > 0) || !Number.isFinite(qty)) return 0;
+  const multiples = Math.floor(qty / step + 1e-9);
+  return Number((multiples * step).toFixed(8));
+}
+
+export function computeDeployQty(args: {
+  availableBalance: number;
+  deployFraction: number;
+  leverage: number;
+  markPrice: number;
+  step: number;
+}): number {
+  const { availableBalance, deployFraction, leverage, markPrice, step } = args;
+  if (!(markPrice > 0) || !(availableBalance > 0)) return 0;
+  const notional = availableBalance * deployFraction * leverage;
+  return roundToStep(notional / markPrice, step);
+}
