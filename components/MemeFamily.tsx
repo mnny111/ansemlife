@@ -55,10 +55,10 @@ export function MemeFamily() {
       <div className="text-center">
         <p className="text-xs font-semibold uppercase tracking-widest text-accent">Called by Ansem</p>
         <h2 className="mt-2 font-display text-4xl uppercase tracking-tight sm:text-5xl">
-          The memes he <span className="font-serif italic normal-case text-gold">called</span>.
+          The coins he <span className="font-serif italic normal-case text-gold">called</span>.
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm text-white/60">
-          Not Ansem&apos;s coins — the memes he shilled along the way. All under one roof, keeping it friendly while the bull runs.
+          The memes he shilled along the way. All under one roof, keeping it friendly while the bull runs.
         </p>
       </div>
 
