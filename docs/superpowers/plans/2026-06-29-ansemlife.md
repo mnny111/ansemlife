@@ -2,23 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Next.js transparency dashboard ("AnsemLife") that proves and narrates that creator rewards from a pump.fun coin are deployed into a 10x long on a target token, with on-chain reward reads, live price, and a manually-updated position feed.
+**Goal:** Build a Next.js transparency dashboard ("AnsemLife") that proves and narrates that creator rewards from a pump.fun coin are deployed into a 10x long on a target token, reading the **live position automatically from AsterDex via a read-only API key**, plus on-chain reward reads and target-token price.
 
-**Architecture:** Single Next.js (App Router, TypeScript) full-stack app. Public landing + dashboard pages read from internal API routes. API routes read Solana reward-wallet inflows via RPC and target-token price via DexScreener, and serve a manually-entered position record from Vercel KV. A password-gated `/admin` page appends immutable position records. Pure business logic (validation, aggregation, math, auth) lives in framework-free `lib/` modules so it is unit-testable.
+**Architecture:** Single Next.js (App Router, TypeScript) full-stack app. Public landing + dashboard read from internal API routes. API routes read: Solana reward-wallet inflows via RPC, target-token price via DexScreener, and the live 10x position from AsterDex (`GET /fapi/v2/positionRisk`, HMAC-signed, **read-only key — no TRADE permission**). A cron-secret-protected route appends position snapshots to Vercel KV for the history/liquidation log. Pure logic (config, signing, normalization, validation, aggregation, auth) lives in framework-free `lib/` modules so it is unit-testable; no order placement anywhere.
 
-**Tech Stack:** Next.js 14+ (App Router), TypeScript, React, Tailwind CSS, Vitest + React Testing Library, Zod (validation), `@vercel/kv` (storage), `@solana/web3.js` (RPC reads), DexScreener public HTTP API. Deploy: Vercel.
+**Tech Stack:** Next.js 14+ (App Router), TypeScript, React, Tailwind CSS, Vitest + React Testing Library, Zod (validation), `@vercel/kv` (storage), `@solana/web3.js` (RPC reads), DexScreener + AsterDex public HTTP APIs, Node `crypto` (HMAC). Deploy: Vercel.
 
 ## Global Constraints
 
-- Language: TypeScript, `strict: true`. No `any` in committed code.
-- Immutability: never mutate objects/arrays in place — return new copies. Position history is append-only.
+- Language: TypeScript, `strict: true`. No `any` in committed `lib/` code (page-boundary JSON glue may use `any` with a comment).
+- Immutability: never mutate objects/arrays in place — return new copies. Snapshot history is append-only.
 - File size: target 200–400 lines, 800 max. Many small focused files.
-- Error handling: validate all external data (env, RPC, DexScreener, admin input) with Zod before use; fail fast with clear messages; never silently swallow errors. External-read failures return last-good value + a staleness flag, never a crash.
-- Secrets: only via env vars (`ADMIN_PASSWORD`, `SOLANA_RPC_URL`, `KV_*`, `REWARD_WALLET_ADDRESS`, `TARGET_TOKEN_PAIR`, `ANSEMLIFE_COIN_MINT`). Never hardcode.
-- Admin auth: constant-time password compare. Reject on missing/incorrect password.
-- Testing: TDD (test first, watch it fail, implement, watch it pass, commit). Target 80%+ coverage on `lib/` logic.
+- Error handling: validate all external data (env, RPC, DexScreener, AsterDex) with Zod before use; fail fast with clear messages; never silently swallow errors. External-read failures return last-good value + a staleness flag, never a crash.
+- Secrets: only via env vars (`SOLANA_RPC_URL`, `REWARD_WALLET_ADDRESS`, `TARGET_TOKEN_PAIR`, `ANSEMLIFE_COIN_MINT`, `ASTER_BASE_URL`, `ASTER_API_KEY`, `ASTER_API_SECRET`, `ASTER_SYMBOL`, `CRON_SECRET`, `KV_*`). Never hardcode.
+- AsterDex key is **read-only** (no TRADE permission). The site never places, modifies, or cancels an order.
+- Cron auth: constant-time bearer-token compare against `CRON_SECRET`.
+- Testing: TDD (test first, watch it fail, implement, watch it pass, commit). Target 80%+ coverage on `lib/` logic. No network in tests — inject `fetch`/balance/timestamp.
 - Risk disclaimer copy (verbatim, must appear on landing + near dashboard position block):
-  > **Not financial advice.** AnsemLife uses 10x leverage — a roughly 9–10% adverse price move can liquidate the entire position to zero. Creator rewards are variable and not guaranteed. You can lose money. Position figures shown are self-reported by the operator.
+  > **Not financial advice.** AnsemLife uses 10x leverage — a roughly 9–10% adverse price move can liquidate the entire position to zero. Creator rewards are variable and not guaranteed. You can lose money. Position data is read live from AsterDex; AsterDex is the source of truth, not a guarantee of outcome.
 
 ---
 
@@ -122,7 +123,7 @@ import "@testing-library/jest-dom/vitest";
 import "./globals.css";
 import type { ReactNode } from "react";
 
-export const metadata = { title: "AnsemLife", description: "Creator rewards, deployed into a 10x long." };
+export const metadata = { title: "AnsemLife", description: "Creator rewards, deployed into a 10x long on AsterDex." };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -146,7 +147,11 @@ ANSEMLIFE_COIN_MINT=
 REWARD_WALLET_ADDRESS=
 TARGET_TOKEN_PAIR=
 SOLANA_RPC_URL=
-ADMIN_PASSWORD=
+ASTER_BASE_URL=https://fapi.asterdex.com
+ASTER_API_KEY=
+ASTER_API_SECRET=
+ASTER_SYMBOL=
+CRON_SECRET=
 KV_REST_API_URL=
 KV_REST_API_TOKEN=
 ```
@@ -183,7 +188,7 @@ git commit -m "chore: scaffold Next.js + TypeScript + Vitest + Tailwind"
 - Consumes: nothing.
 - Produces:
   - `loadConfig(env: Record<string, string | undefined>): AppConfig` — throws `Error` listing all missing required keys.
-  - `type AppConfig = { coinMint: string; rewardWallet: string; targetTokenPair: string; solanaRpcUrl: string; adminPassword: string; kvUrl: string; kvToken: string }`
+  - `type AppConfig = { coinMint: string; rewardWallet: string; targetTokenPair: string; solanaRpcUrl: string; asterBaseUrl: string; asterApiKey: string; asterApiSecret: string; asterSymbol: string; cronSecret: string; kvUrl: string; kvToken: string }`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -195,18 +200,21 @@ import { loadConfig } from "./config";
 const full = {
   ANSEMLIFE_COIN_MINT: "mint", REWARD_WALLET_ADDRESS: "wallet",
   TARGET_TOKEN_PAIR: "pair", SOLANA_RPC_URL: "https://rpc",
-  ADMIN_PASSWORD: "pw", KV_REST_API_URL: "https://kv", KV_REST_API_TOKEN: "tok",
+  ASTER_BASE_URL: "https://fapi.asterdex.com", ASTER_API_KEY: "ak",
+  ASTER_API_SECRET: "sk", ASTER_SYMBOL: "ANSEMUSDT", CRON_SECRET: "cs",
+  KV_REST_API_URL: "https://kv", KV_REST_API_TOKEN: "tok",
 };
 
 describe("loadConfig", () => {
   it("maps env to AppConfig", () => {
     const cfg = loadConfig(full);
     expect(cfg.rewardWallet).toBe("wallet");
-    expect(cfg.adminPassword).toBe("pw");
+    expect(cfg.asterSymbol).toBe("ANSEMUSDT");
+    expect(cfg.cronSecret).toBe("cs");
   });
   it("throws listing every missing key", () => {
     expect(() => loadConfig({})).toThrow(/ANSEMLIFE_COIN_MINT/);
-    expect(() => loadConfig({ ...full, ADMIN_PASSWORD: "" })).toThrow(/ADMIN_PASSWORD/);
+    expect(() => loadConfig({ ...full, ASTER_API_SECRET: "" })).toThrow(/ASTER_API_SECRET/);
   });
 });
 ```
@@ -221,14 +229,17 @@ Expected: FAIL — cannot find module `./config`.
 `lib/config.ts`:
 ```ts
 export type AppConfig = {
-  coinMint: string; rewardWallet: string; targetTokenPair: string;
-  solanaRpcUrl: string; adminPassword: string; kvUrl: string; kvToken: string;
+  coinMint: string; rewardWallet: string; targetTokenPair: string; solanaRpcUrl: string;
+  asterBaseUrl: string; asterApiKey: string; asterApiSecret: string; asterSymbol: string;
+  cronSecret: string; kvUrl: string; kvToken: string;
 };
 
 const KEYS: Record<keyof AppConfig, string> = {
   coinMint: "ANSEMLIFE_COIN_MINT", rewardWallet: "REWARD_WALLET_ADDRESS",
   targetTokenPair: "TARGET_TOKEN_PAIR", solanaRpcUrl: "SOLANA_RPC_URL",
-  adminPassword: "ADMIN_PASSWORD", kvUrl: "KV_REST_API_URL", kvToken: "KV_REST_API_TOKEN",
+  asterBaseUrl: "ASTER_BASE_URL", asterApiKey: "ASTER_API_KEY",
+  asterApiSecret: "ASTER_API_SECRET", asterSymbol: "ASTER_SYMBOL",
+  cronSecret: "CRON_SECRET", kvUrl: "KV_REST_API_URL", kvToken: "KV_REST_API_TOKEN",
 };
 
 export function loadConfig(env: Record<string, string | undefined>): AppConfig {
@@ -258,7 +269,7 @@ git commit -m "feat: env config loader with fail-fast validation"
 
 ---
 
-### Task 3: Position domain model + Zod schema + aggregation math
+### Task 3: Position snapshot model + summary math
 
 **Files:**
 - Create: `lib/position.ts`, `lib/position.test.ts`
@@ -266,50 +277,45 @@ git commit -m "feat: env config loader with fail-fast validation"
 **Interfaces:**
 - Consumes: nothing.
 - Produces:
-  - `type PositionRecord = { id: string; timestamp: string; status: "open" | "liquidated" | "closed"; side: "long"; leverage: number; entryPrice: number; sizeUsd: number; marginUsd: number; liquidationPrice: number; pnlUsd: number | null; note?: string }`
-  - `PositionInputSchema` (Zod) — validates admin form input (everything except `id`/`timestamp`, which are server-set).
-  - `type PositionInput = z.infer<typeof PositionInputSchema>`
-  - `summarize(history: PositionRecord[]): { current: PositionRecord | null; deployedTotalUsd: number; liquidatedCount: number; survivedCount: number }`
+  - `type PositionSnapshot = { timestamp: string; symbol: string; status: "open" | "closed"; side: "long" | "short" | "flat"; leverage: number; entryPrice: number; sizeUsd: number; marginUsd: number; liquidationPrice: number; unrealizedPnlUsd: number }`
+  - `PositionSnapshotSchema` (Zod) validating the above.
+  - `summarize(history: PositionSnapshot[]): { latest: PositionSnapshot | null; deployedTotalUsd: number; liquidatedCount: number; survivedCount: number }` — `deployedTotalUsd` = sum of `marginUsd` over snapshots that are `open`; `liquidatedCount` = transitions from `open` to `closed`; `survivedCount` = count of `open` snapshots.
 
 - [ ] **Step 1: Write the failing test**
 
 `lib/position.test.ts`:
 ```ts
 import { describe, it, expect } from "vitest";
-import { PositionInputSchema, summarize, type PositionRecord } from "./position";
+import { PositionSnapshotSchema, summarize, type PositionSnapshot } from "./position";
 
-const rec = (over: Partial<PositionRecord>): PositionRecord => ({
-  id: "1", timestamp: "2026-06-29T00:00:00.000Z", status: "open", side: "long",
+const snap = (over: Partial<PositionSnapshot>): PositionSnapshot => ({
+  timestamp: "2026-06-29T00:00:00.000Z", symbol: "ANSEMUSDT", status: "open", side: "long",
   leverage: 10, entryPrice: 1, sizeUsd: 1000, marginUsd: 100, liquidationPrice: 0.9,
-  pnlUsd: 0, ...over,
+  unrealizedPnlUsd: 0, ...over,
 });
 
-describe("PositionInputSchema", () => {
-  it("accepts valid input", () => {
-    const r = PositionInputSchema.safeParse({
-      status: "open", side: "long", leverage: 10, entryPrice: 1,
-      sizeUsd: 1000, marginUsd: 100, liquidationPrice: 0.9, pnlUsd: 0,
-    });
-    expect(r.success).toBe(true);
+describe("PositionSnapshotSchema", () => {
+  it("accepts a valid snapshot", () => {
+    expect(PositionSnapshotSchema.safeParse(snap({})).success).toBe(true);
   });
-  it("rejects leverage <= 0 and non-long side", () => {
-    expect(PositionInputSchema.safeParse({ status: "open", side: "long", leverage: 0, entryPrice: 1, sizeUsd: 1, marginUsd: 1, liquidationPrice: 1, pnlUsd: 0 }).success).toBe(false);
-    expect(PositionInputSchema.safeParse({ status: "open", side: "short", leverage: 10, entryPrice: 1, sizeUsd: 1, marginUsd: 1, liquidationPrice: 1, pnlUsd: 0 }).success).toBe(false);
+  it("rejects negative leverage", () => {
+    expect(PositionSnapshotSchema.safeParse(snap({ leverage: -1 })).success).toBe(false);
   });
 });
 
 describe("summarize", () => {
-  it("returns null current and zeroes for empty history", () => {
-    expect(summarize([])).toEqual({ current: null, deployedTotalUsd: 0, liquidatedCount: 0, survivedCount: 0 });
+  it("zeroes for empty history", () => {
+    expect(summarize([])).toEqual({ latest: null, deployedTotalUsd: 0, liquidatedCount: 0, survivedCount: 0 });
   });
-  it("uses latest by timestamp as current and sums margin", () => {
-    const a = rec({ id: "a", timestamp: "2026-06-29T00:00:00.000Z", marginUsd: 100, status: "liquidated" });
-    const b = rec({ id: "b", timestamp: "2026-06-30T00:00:00.000Z", marginUsd: 250, status: "open" });
-    const s = summarize([a, b]);
-    expect(s.current?.id).toBe("b");
+  it("uses latest by timestamp, sums open margin, counts liquidations as open->closed transitions", () => {
+    const a = snap({ timestamp: "2026-06-29T00:00:00.000Z", status: "open", marginUsd: 100 });
+    const b = snap({ timestamp: "2026-06-30T00:00:00.000Z", status: "closed", side: "flat", marginUsd: 0 });
+    const c = snap({ timestamp: "2026-07-01T00:00:00.000Z", status: "open", marginUsd: 250 });
+    const s = summarize([a, b, c]);
+    expect(s.latest?.timestamp).toBe("2026-07-01T00:00:00.000Z");
     expect(s.deployedTotalUsd).toBe(350);
-    expect(s.liquidatedCount).toBe(1);
-    expect(s.survivedCount).toBe(1);
+    expect(s.liquidatedCount).toBe(1); // a(open) -> b(closed)
+    expect(s.survivedCount).toBe(2);   // a and c are open
   });
 });
 ```
@@ -325,34 +331,38 @@ Expected: FAIL — cannot find module `./position`.
 ```ts
 import { z } from "zod";
 
-export const PositionInputSchema = z.object({
-  status: z.enum(["open", "liquidated", "closed"]),
-  side: z.literal("long"),
-  leverage: z.number().positive(),
-  entryPrice: z.number().positive(),
+export const PositionSnapshotSchema = z.object({
+  timestamp: z.string(),
+  symbol: z.string(),
+  status: z.enum(["open", "closed"]),
+  side: z.enum(["long", "short", "flat"]),
+  leverage: z.number().nonnegative(),
+  entryPrice: z.number().nonnegative(),
   sizeUsd: z.number().nonnegative(),
   marginUsd: z.number().nonnegative(),
   liquidationPrice: z.number().nonnegative(),
-  pnlUsd: z.number().nullable(),
-  note: z.string().max(280).optional(),
+  unrealizedPnlUsd: z.number(),
 });
 
-export type PositionInput = z.infer<typeof PositionInputSchema>;
+export type PositionSnapshot = z.infer<typeof PositionSnapshotSchema>;
 
-export type PositionRecord = PositionInput & { id: string; timestamp: string };
-
-export function summarize(history: PositionRecord[]): {
-  current: PositionRecord | null; deployedTotalUsd: number;
+export function summarize(history: PositionSnapshot[]): {
+  latest: PositionSnapshot | null; deployedTotalUsd: number;
   liquidatedCount: number; survivedCount: number;
 } {
   if (history.length === 0)
-    return { current: null, deployedTotalUsd: 0, liquidatedCount: 0, survivedCount: 0 };
+    return { latest: null, deployedTotalUsd: 0, liquidatedCount: 0, survivedCount: 0 };
   const sorted = [...history].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const current = sorted[sorted.length - 1];
-  const deployedTotalUsd = sorted.reduce((sum, r) => sum + r.marginUsd, 0);
-  const liquidatedCount = sorted.filter((r) => r.status === "liquidated").length;
-  const survivedCount = sorted.length - liquidatedCount;
-  return { current, deployedTotalUsd, liquidatedCount, survivedCount };
+  const latest = sorted[sorted.length - 1];
+  const deployedTotalUsd = sorted
+    .filter((s) => s.status === "open")
+    .reduce((sum, s) => sum + s.marginUsd, 0);
+  const survivedCount = sorted.filter((s) => s.status === "open").length;
+  let liquidatedCount = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i - 1].status === "open" && sorted[i].status === "closed") liquidatedCount++;
+  }
+  return { latest, deployedTotalUsd, liquidatedCount, survivedCount };
 }
 ```
 
@@ -365,32 +375,33 @@ Expected: PASS (4 tests).
 
 ```bash
 git add lib/position.ts lib/position.test.ts
-git commit -m "feat: position model, validation schema, and summary aggregation"
+git commit -m "feat: position snapshot model and summary aggregation"
 ```
 
 ---
 
-### Task 4: Admin auth helper
+### Task 4: Cron-secret auth helper
 
 **Files:**
 - Create: `lib/auth.ts`, `lib/auth.test.ts`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `verifyPassword(submitted: string, expected: string): boolean` — constant-time compare; returns false on length mismatch or empty `expected`.
+- Produces: `verifyBearer(authHeader: string | null, expected: string): boolean` — parses `Bearer <token>`, constant-time compares the token to `expected`; returns false on missing header, wrong scheme, length mismatch, or empty `expected`.
 
 - [ ] **Step 1: Write the failing test**
 
 `lib/auth.test.ts`:
 ```ts
 import { describe, it, expect } from "vitest";
-import { verifyPassword } from "./auth";
+import { verifyBearer } from "./auth";
 
-describe("verifyPassword", () => {
-  it("accepts exact match", () => expect(verifyPassword("s3cret", "s3cret")).toBe(true));
-  it("rejects wrong password", () => expect(verifyPassword("nope", "s3cret")).toBe(false));
-  it("rejects different length", () => expect(verifyPassword("s3cre", "s3cret")).toBe(false));
-  it("rejects empty expected", () => expect(verifyPassword("", "")).toBe(false));
+describe("verifyBearer", () => {
+  it("accepts exact bearer token", () => expect(verifyBearer("Bearer s3cret", "s3cret")).toBe(true));
+  it("rejects wrong token", () => expect(verifyBearer("Bearer nope", "s3cret")).toBe(false));
+  it("rejects missing header", () => expect(verifyBearer(null, "s3cret")).toBe(false));
+  it("rejects wrong scheme", () => expect(verifyBearer("Basic s3cret", "s3cret")).toBe(false));
+  it("rejects empty expected", () => expect(verifyBearer("Bearer ", "")).toBe(false));
 });
 ```
 
@@ -405,9 +416,11 @@ Expected: FAIL — cannot find module `./auth`.
 ```ts
 import { timingSafeEqual } from "node:crypto";
 
-export function verifyPassword(submitted: string, expected: string): boolean {
-  if (!expected) return false;
-  const a = Buffer.from(submitted);
+export function verifyBearer(authHeader: string | null, expected: string): boolean {
+  if (!expected || !authHeader) return false;
+  const [scheme, token] = authHeader.split(" ");
+  if (scheme !== "Bearer" || !token) return false;
+  const a = Buffer.from(token);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
@@ -417,13 +430,13 @@ export function verifyPassword(submitted: string, expected: string): boolean {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run lib/auth.test.ts`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add lib/auth.ts lib/auth.test.ts
-git commit -m "feat: constant-time admin password verification"
+git commit -m "feat: constant-time bearer-token (cron secret) verification"
 ```
 
 ---
@@ -446,8 +459,7 @@ git commit -m "feat: constant-time admin password verification"
 import { describe, it, expect, vi } from "vitest";
 import { fetchTokenPrice } from "./price";
 
-const ok = (body: unknown) =>
-  ({ ok: true, json: async () => body } as Response);
+const ok = (body: unknown) => ({ ok: true, json: async () => body } as Response);
 
 describe("fetchTokenPrice", () => {
   it("parses DexScreener pair response", async () => {
@@ -531,9 +543,7 @@ git commit -m "feat: DexScreener price reader with validated response"
 - Consumes: nothing (takes an injectable balance-reader fn).
 - Produces:
   - `type RewardsSummary = { lamports: number; sol: number }`
-  - `fetchRewardsBalance(rpcUrl: string, wallet: string, getBalanceImpl?: (rpcUrl: string, wallet: string) => Promise<number>): Promise<RewardsSummary>` — converts lamports→SOL (÷ 1e9); throws on negative/NaN balance.
-
-Note: the default `getBalanceImpl` uses `@solana/web3.js` `Connection.getBalance(new PublicKey(wallet))`. Tests inject a stub so no network is hit.
+  - `fetchRewardsBalance(rpcUrl: string, wallet: string, getBalanceImpl?: (rpcUrl: string, wallet: string) => Promise<number>): Promise<RewardsSummary>` — converts lamports→SOL (÷ 1e9); throws on negative/NaN balance. Default impl uses `@solana/web3.js` `Connection.getBalance`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -601,27 +611,195 @@ git commit -m "feat: Solana reward-wallet balance reader"
 
 ---
 
-### Task 7: KV-backed position store
+### Task 7: AsterDex read-only position reader
+
+**Files:**
+- Create: `lib/aster.ts`, `lib/aster.test.ts`
+
+**Interfaces:**
+- Consumes: `PositionSnapshot` (Task 3); injectable `fetch` and `nowMs`/`timestamp`.
+- Produces:
+  - `type AsterCreds = { baseUrl: string; apiKey: string; apiSecret: string }`
+  - `signQuery(params: Record<string, string | number>, secret: string): string` — returns the full query string including the appended `signature` (HMAC-SHA256 of the pre-signature query string). Deterministic.
+  - `normalizePosition(raw: unknown, timestamp: string): PositionSnapshot` — validates Binance-style `positionRisk` row with Zod and maps to a `PositionSnapshot`.
+  - `fetchAsterPosition(creds: AsterCreds, symbol: string, opts?: { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string }): Promise<PositionSnapshot>` — signed `GET /fapi/v2/positionRisk?symbol=...`, returns the normalized snapshot for `symbol`. Throws on non-OK or empty result.
+
+Mapping (Aster = Binance-Futures-style): `positionAmt`→size/side, `entryPrice`, `markPrice` (size notional = |positionAmt|·markPrice), `leverage`, `liquidationPrice`, `isolatedMargin`→marginUsd, `unRealizedProfit`→unrealizedPnlUsd. `status` = `open` when `positionAmt !== 0` else `closed`; `side` = `long` if `>0`, `short` if `<0`, else `flat`.
+
+- [ ] **Step 1: Write the failing test**
+
+`lib/aster.test.ts`:
+```ts
+import { describe, it, expect, vi } from "vitest";
+import { signQuery, normalizePosition, fetchAsterPosition } from "./aster";
+import { createHmac } from "node:crypto";
+
+describe("signQuery", () => {
+  it("appends a correct HMAC-SHA256 signature", () => {
+    const q = signQuery({ symbol: "ANSEMUSDT", timestamp: 1000 }, "secret");
+    const expectedSig = createHmac("sha256", "secret").update("symbol=ANSEMUSDT&timestamp=1000").digest("hex");
+    expect(q).toBe(`symbol=ANSEMUSDT&timestamp=1000&signature=${expectedSig}`);
+  });
+});
+
+describe("normalizePosition", () => {
+  it("maps a long positionRisk row", () => {
+    const raw = {
+      symbol: "ANSEMUSDT", positionAmt: "100", entryPrice: "1.0", markPrice: "1.2",
+      unRealizedProfit: "20", liquidationPrice: "0.9", leverage: "10", isolatedMargin: "10",
+    };
+    const s = normalizePosition(raw, "2026-06-29T00:00:00.000Z");
+    expect(s).toEqual({
+      timestamp: "2026-06-29T00:00:00.000Z", symbol: "ANSEMUSDT", status: "open", side: "long",
+      leverage: 10, entryPrice: 1.0, sizeUsd: 120, marginUsd: 10, liquidationPrice: 0.9, unrealizedPnlUsd: 20,
+    });
+  });
+  it("maps a flat position as closed", () => {
+    const raw = {
+      symbol: "ANSEMUSDT", positionAmt: "0", entryPrice: "0", markPrice: "1.2",
+      unRealizedProfit: "0", liquidationPrice: "0", leverage: "10", isolatedMargin: "0",
+    };
+    expect(normalizePosition(raw, "t").status).toBe("closed");
+    expect(normalizePosition(raw, "t").side).toBe("flat");
+  });
+});
+
+describe("fetchAsterPosition", () => {
+  it("calls the signed endpoint and returns the matching symbol snapshot", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(String(url)).toContain("/fapi/v2/positionRisk");
+      expect(String(url)).toContain("signature=");
+      expect((init?.headers as Record<string, string>)["X-MBX-APIKEY"]).toBe("ak");
+      return { ok: true, json: async () => [
+        { symbol: "ANSEMUSDT", positionAmt: "100", entryPrice: "1.0", markPrice: "1.2",
+          unRealizedProfit: "20", liquidationPrice: "0.9", leverage: "10", isolatedMargin: "10" },
+      ] } as Response;
+    }) as unknown as typeof fetch;
+    const s = await fetchAsterPosition(
+      { baseUrl: "https://fapi.asterdex.com", apiKey: "ak", apiSecret: "sk" },
+      "ANSEMUSDT",
+      { fetchImpl, nowMs: 1000, timestamp: "2026-06-29T00:00:00.000Z" },
+    );
+    expect(s.symbol).toBe("ANSEMUSDT");
+    expect(s.sizeUsd).toBe(120);
+  });
+  it("throws on non-OK", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401 } as Response)) as unknown as typeof fetch;
+    await expect(
+      fetchAsterPosition({ baseUrl: "https://x", apiKey: "ak", apiSecret: "sk" }, "ANSEMUSDT",
+        { fetchImpl, nowMs: 1000 }),
+    ).rejects.toThrow(/401/);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run lib/aster.test.ts`
+Expected: FAIL — cannot find module `./aster`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+`lib/aster.ts`:
+```ts
+import { createHmac } from "node:crypto";
+import { z } from "zod";
+import { PositionSnapshotSchema, type PositionSnapshot } from "./position";
+
+export type AsterCreds = { baseUrl: string; apiKey: string; apiSecret: string };
+
+export function signQuery(params: Record<string, string | number>, secret: string): string {
+  const query = Object.entries(params)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+  const signature = createHmac("sha256", secret).update(query).digest("hex");
+  return `${query}&signature=${signature}`;
+}
+
+const RawRowSchema = z.object({
+  symbol: z.string(),
+  positionAmt: z.string(),
+  entryPrice: z.string(),
+  markPrice: z.string(),
+  unRealizedProfit: z.string(),
+  liquidationPrice: z.string(),
+  leverage: z.string(),
+  isolatedMargin: z.string(),
+});
+
+export function normalizePosition(raw: unknown, timestamp: string): PositionSnapshot {
+  const r = RawRowSchema.parse(raw);
+  const amt = Number(r.positionAmt);
+  const mark = Number(r.markPrice);
+  const status = amt !== 0 ? "open" : "closed";
+  const side = amt > 0 ? "long" : amt < 0 ? "short" : "flat";
+  const snapshot: PositionSnapshot = {
+    timestamp,
+    symbol: r.symbol,
+    status,
+    side,
+    leverage: Number(r.leverage),
+    entryPrice: Number(r.entryPrice),
+    sizeUsd: Math.abs(amt) * mark,
+    marginUsd: Number(r.isolatedMargin),
+    liquidationPrice: Number(r.liquidationPrice),
+    unrealizedPnlUsd: Number(r.unRealizedProfit),
+  };
+  return PositionSnapshotSchema.parse(snapshot);
+}
+
+export async function fetchAsterPosition(
+  creds: AsterCreds,
+  symbol: string,
+  opts: { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string } = {},
+): Promise<PositionSnapshot> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const nowMs = opts.nowMs ?? Date.now();
+  const timestamp = opts.timestamp ?? new Date(nowMs).toISOString();
+  const query = signQuery({ symbol, timestamp: nowMs }, creds.apiSecret);
+  const url = `${creds.baseUrl}/fapi/v2/positionRisk?${query}`;
+  const res = await fetchImpl(url, { headers: { "X-MBX-APIKEY": creds.apiKey } });
+  if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
+  const rows = (await res.json()) as unknown[];
+  const row = Array.isArray(rows) ? rows.find((x) => (x as { symbol?: string }).symbol === symbol) : undefined;
+  if (!row) throw new Error(`AsterDex returned no position for ${symbol}`);
+  return normalizePosition(row, timestamp);
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run lib/aster.test.ts`
+Expected: PASS (5 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add lib/aster.ts lib/aster.test.ts
+git commit -m "feat: AsterDex read-only position reader (HMAC-signed) + normalization"
+```
+
+---
+
+### Task 8: KV-backed snapshot store
 
 **Files:**
 - Create: `lib/store.ts`, `lib/store.test.ts`
 
 **Interfaces:**
-- Consumes: `PositionRecord`, `PositionInput` (Task 3); an injectable KV client.
+- Consumes: `PositionSnapshot` (Task 3); an injectable KV client.
 - Produces:
   - `type KvLike = { get<T>(key: string): Promise<T | null>; set(key: string, value: unknown): Promise<unknown> }`
-  - `getHistory(kv: KvLike): Promise<PositionRecord[]>` — returns `[]` if unset.
-  - `appendPosition(kv: KvLike, input: PositionInput, id: string, timestamp: string): Promise<PositionRecord>` — validates input via `PositionInputSchema`, appends an immutable record, persists, returns it.
-
-`id`/`timestamp` are passed in (not generated inside) so the function stays pure/testable; the API route supplies `crypto.randomUUID()` and `new Date().toISOString()`.
+  - `getHistory(kv: KvLike): Promise<PositionSnapshot[]>` — returns `[]` if unset.
+  - `appendSnapshot(kv: KvLike, snapshot: PositionSnapshot): Promise<PositionSnapshot[]>` — validates with `PositionSnapshotSchema`, appends immutably, persists, returns the new full history.
 
 - [ ] **Step 1: Write the failing test**
 
 `lib/store.test.ts`:
 ```ts
 import { describe, it, expect } from "vitest";
-import { getHistory, appendPosition, type KvLike } from "./store";
-import type { PositionInput } from "./position";
+import { getHistory, appendSnapshot, type KvLike } from "./store";
+import type { PositionSnapshot } from "./position";
 
 function memKv(): KvLike {
   const m = new Map<string, unknown>();
@@ -630,30 +808,27 @@ function memKv(): KvLike {
     set: async (k, v) => void m.set(k, v),
   };
 }
-const input: PositionInput = {
-  status: "open", side: "long", leverage: 10, entryPrice: 1,
-  sizeUsd: 1000, marginUsd: 100, liquidationPrice: 0.9, pnlUsd: 0,
+const snap: PositionSnapshot = {
+  timestamp: "2026-06-29T00:00:00.000Z", symbol: "ANSEMUSDT", status: "open", side: "long",
+  leverage: 10, entryPrice: 1, sizeUsd: 1000, marginUsd: 100, liquidationPrice: 0.9, unrealizedPnlUsd: 0,
 };
 
-describe("position store", () => {
+describe("snapshot store", () => {
   it("returns empty history when unset", async () => {
     expect(await getHistory(memKv())).toEqual([]);
   });
   it("appends without mutating prior history", async () => {
     const kv = memKv();
-    const a = await appendPosition(kv, input, "id-a", "2026-06-29T00:00:00.000Z");
+    await appendSnapshot(kv, snap);
     const before = await getHistory(kv);
-    const b = await appendPosition(kv, { ...input, marginUsd: 200 }, "id-b", "2026-06-30T00:00:00.000Z");
+    await appendSnapshot(kv, { ...snap, timestamp: "2026-06-30T00:00:00.000Z", marginUsd: 200 });
     const after = await getHistory(kv);
     expect(before).toHaveLength(1);
     expect(after).toHaveLength(2);
-    expect(after[0]).toEqual(a);
-    expect(after[1].id).toBe(b.id);
+    expect(after[0]).toEqual(snap);
   });
-  it("rejects invalid input", async () => {
-    await expect(
-      appendPosition(memKv(), { ...input, leverage: -1 }, "id", "2026-06-29T00:00:00.000Z"),
-    ).rejects.toThrow();
+  it("rejects an invalid snapshot", async () => {
+    await expect(appendSnapshot(memKv(), { ...snap, leverage: -1 })).rejects.toThrow();
   });
 });
 ```
@@ -667,32 +842,26 @@ Expected: FAIL — cannot find module `./store`.
 
 `lib/store.ts`:
 ```ts
-import { PositionInputSchema, type PositionRecord } from "./position";
+import { PositionSnapshotSchema, type PositionSnapshot } from "./position";
 
 export type KvLike = {
   get<T>(key: string): Promise<T | null>;
   set(key: string, value: unknown): Promise<unknown>;
 };
 
-const HISTORY_KEY = "ansemlife:position-history";
+const HISTORY_KEY = "ansemlife:snapshot-history";
 
-export async function getHistory(kv: KvLike): Promise<PositionRecord[]> {
-  const data = await kv.get<PositionRecord[]>(HISTORY_KEY);
+export async function getHistory(kv: KvLike): Promise<PositionSnapshot[]> {
+  const data = await kv.get<PositionSnapshot[]>(HISTORY_KEY);
   return data ?? [];
 }
 
-export async function appendPosition(
-  kv: KvLike,
-  input: unknown,
-  id: string,
-  timestamp: string,
-): Promise<PositionRecord> {
-  const valid = PositionInputSchema.parse(input);
-  const record: PositionRecord = { ...valid, id, timestamp };
+export async function appendSnapshot(kv: KvLike, snapshot: PositionSnapshot): Promise<PositionSnapshot[]> {
+  const valid = PositionSnapshotSchema.parse(snapshot);
   const history = await getHistory(kv);
-  const next = [...history, record];
+  const next = [...history, valid];
   await kv.set(HISTORY_KEY, next);
-  return record;
+  return next;
 }
 ```
 
@@ -705,23 +874,23 @@ Expected: PASS (3 tests).
 
 ```bash
 git add lib/store.ts lib/store.test.ts
-git commit -m "feat: KV-backed append-only position store"
+git commit -m "feat: KV-backed append-only snapshot store"
 ```
 
 ---
 
-### Task 8: API routes (rewards, price, position GET/POST)
+### Task 9: API routes (rewards, price, position, cron snapshot)
 
 **Files:**
-- Create: `lib/kv.ts`, `app/api/rewards/route.ts`, `app/api/price/route.ts`, `app/api/position/route.ts`, `app/api/position/route.test.ts`
+- Create: `lib/kv.ts`, `app/api/rewards/route.ts`, `app/api/price/route.ts`, `app/api/position/route.ts`, `app/api/cron/snapshot/route.ts`, `app/api/cron/snapshot/route.test.ts`
 
 **Interfaces:**
-- Consumes: `loadConfig` (T2), `fetchTokenPrice` (T5), `fetchRewardsBalance` (T6), `getHistory`/`appendPosition` (T7), `summarize` (T3), `verifyPassword` (T4).
-- Produces HTTP JSON contracts the frontend (T9–T11) consumes:
-  - `GET /api/rewards` → `{ sol: number; lamports: number; wallet: string }` or `{ error, stale: true, ... }` on read failure (HTTP 200 with last-good is out of scope for v1 — on failure return `{ error }` 502).
-  - `GET /api/price` → `TokenPrice` or `{ error }` 502.
-  - `GET /api/position` → `{ current, deployedTotalUsd, liquidatedCount, survivedCount, history }`.
-  - `POST /api/position` with header `x-admin-password` + JSON `PositionInput` → `{ ok: true, record }` (200) or `{ error }` (401 on bad password, 400 on invalid body).
+- Consumes: `loadConfig` (T2), `fetchTokenPrice` (T5), `fetchRewardsBalance` (T6), `fetchAsterPosition` (T7), `getHistory`/`appendSnapshot` (T8), `summarize` (T3), `verifyBearer` (T4).
+- Produces HTTP JSON contracts the frontend (T11–T12) consumes:
+  - `GET /api/rewards` → `{ sol, lamports, wallet }` or `{ error }` (502).
+  - `GET /api/price` → `TokenPrice` or `{ error }` (502).
+  - `GET /api/position` → `{ live: PositionSnapshot | null, liveError: string | null, deployedTotalUsd, liquidatedCount, survivedCount, history }`. Live position from AsterDex; on live-read failure, `live` falls back to the latest stored snapshot and `liveError` is set.
+  - `POST /api/cron/snapshot` with `Authorization: Bearer <CRON_SECRET>` → reads AsterDex, appends a snapshot, returns `{ ok: true, snapshot }`; `401` on bad secret, `502` on read failure.
 
 - [ ] **Step 1: Add the real KV adapter**
 
@@ -736,9 +905,9 @@ export const vercelKv: KvLike = {
 };
 ```
 
-- [ ] **Step 2: Write the failing test for the POST/GET position route**
+- [ ] **Step 2: Write the failing test for the cron snapshot route**
 
-`app/api/position/route.test.ts`:
+`app/api/cron/snapshot/route.test.ts`:
 ```ts
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -750,95 +919,111 @@ vi.mock("@/lib/kv", () => ({
   },
 }));
 vi.mock("@/lib/config", () => ({
-  loadConfig: () => ({ adminPassword: "pw" }),
+  loadConfig: () => ({
+    cronSecret: "cs", asterBaseUrl: "https://x", asterApiKey: "ak",
+    asterApiSecret: "sk", asterSymbol: "ANSEMUSDT",
+  }),
 }));
-
-import { GET, POST } from "./route";
-
-const body = {
-  status: "open", side: "long", leverage: 10, entryPrice: 1,
-  sizeUsd: 1000, marginUsd: 100, liquidationPrice: 0.9, pnlUsd: 0,
+const snapshot = {
+  timestamp: "2026-06-29T00:00:00.000Z", symbol: "ANSEMUSDT", status: "open", side: "long",
+  leverage: 10, entryPrice: 1, sizeUsd: 120, marginUsd: 10, liquidationPrice: 0.9, unrealizedPnlUsd: 20,
 };
+vi.mock("@/lib/aster", () => ({ fetchAsterPosition: async () => snapshot }));
 
-describe("/api/position", () => {
+import { POST } from "./route";
+
+describe("/api/cron/snapshot", () => {
   beforeEach(() => store.clear());
-
-  it("rejects POST with wrong password", async () => {
-    const res = await POST(new Request("http://t/api/position", {
-      method: "POST", headers: { "x-admin-password": "nope" }, body: JSON.stringify(body),
-    }));
+  it("rejects a bad secret", async () => {
+    const res = await POST(new Request("http://t", { method: "POST", headers: { authorization: "Bearer nope" } }));
     expect(res.status).toBe(401);
   });
-
-  it("accepts valid POST then reflects it in GET", async () => {
-    const postRes = await POST(new Request("http://t/api/position", {
-      method: "POST", headers: { "x-admin-password": "pw" }, body: JSON.stringify(body),
-    }));
-    expect(postRes.status).toBe(200);
-    const getRes = await GET();
-    const json = await getRes.json();
-    expect(json.current.marginUsd).toBe(100);
-    expect(json.deployedTotalUsd).toBe(100);
-    expect(json.history).toHaveLength(1);
-  });
-
-  it("rejects invalid body with 400", async () => {
-    const res = await POST(new Request("http://t/api/position", {
-      method: "POST", headers: { "x-admin-password": "pw" }, body: JSON.stringify({ ...body, leverage: -5 }),
-    }));
-    expect(res.status).toBe(400);
+  it("appends a snapshot with the correct secret", async () => {
+    const res = await POST(new Request("http://t", { method: "POST", headers: { authorization: "Bearer cs" } }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.snapshot.symbol).toBe("ANSEMUSDT");
+    expect(store.get("ansemlife:snapshot-history")).toHaveLength(1);
   });
 });
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `npx vitest run app/api/position/route.test.ts`
+Run: `npx vitest run app/api/cron/snapshot/route.test.ts`
 Expected: FAIL — cannot find module `./route`.
 
-- [ ] **Step 4: Implement the position route**
+- [ ] **Step 4: Implement the cron snapshot route**
 
-`app/api/position/route.ts`:
+`app/api/cron/snapshot/route.ts`:
 ```ts
 import { NextResponse } from "next/server";
 import { loadConfig } from "@/lib/config";
 import { vercelKv } from "@/lib/kv";
-import { getHistory, appendPosition } from "@/lib/store";
-import { summarize } from "@/lib/position";
-import { verifyPassword } from "@/lib/auth";
-
-export async function GET() {
-  const history = await getHistory(vercelKv);
-  return NextResponse.json({ ...summarize(history), history });
-}
+import { appendSnapshot } from "@/lib/store";
+import { fetchAsterPosition } from "@/lib/aster";
+import { verifyBearer } from "@/lib/auth";
 
 export async function POST(req: Request) {
-  const { adminPassword } = loadConfig(process.env);
-  const submitted = req.headers.get("x-admin-password") ?? "";
-  if (!verifyPassword(submitted, adminPassword)) {
+  const cfg = loadConfig(process.env);
+  if (!verifyBearer(req.headers.get("authorization"), cfg.cronSecret)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  let input: unknown;
   try {
-    input = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-  try {
-    const record = await appendPosition(vercelKv, input, crypto.randomUUID(), new Date().toISOString());
-    return NextResponse.json({ ok: true, record });
+    const snapshot = await fetchAsterPosition(
+      { baseUrl: cfg.asterBaseUrl, apiKey: cfg.asterApiKey, apiSecret: cfg.asterApiSecret },
+      cfg.asterSymbol,
+    );
+    await appendSnapshot(vercelKv, snapshot);
+    return NextResponse.json({ ok: true, snapshot });
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Invalid input" }, { status: 400 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "snapshot failed" }, { status: 502 });
   }
 }
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `npx vitest run app/api/position/route.test.ts`
-Expected: PASS (3 tests).
+Run: `npx vitest run app/api/cron/snapshot/route.test.ts`
+Expected: PASS (2 tests).
 
-- [ ] **Step 6: Implement the rewards and price routes (no separate unit test — logic covered in T5/T6)**
+- [ ] **Step 6: Implement the read routes (logic already unit-tested in T5/T6/T7)**
+
+`app/api/position/route.ts`:
+```ts
+import { NextResponse } from "next/server";
+import { loadConfig } from "@/lib/config";
+import { vercelKv } from "@/lib/kv";
+import { getHistory } from "@/lib/store";
+import { summarize } from "@/lib/position";
+import { fetchAsterPosition } from "@/lib/aster";
+
+export const revalidate = 15;
+
+export async function GET() {
+  const cfg = loadConfig(process.env);
+  const history = await getHistory(vercelKv);
+  const summary = summarize(history);
+  let live = summary.latest;
+  let liveError: string | null = null;
+  try {
+    live = await fetchAsterPosition(
+      { baseUrl: cfg.asterBaseUrl, apiKey: cfg.asterApiKey, apiSecret: cfg.asterApiSecret },
+      cfg.asterSymbol,
+    );
+  } catch (err) {
+    liveError = err instanceof Error ? err.message : "live read failed";
+  }
+  return NextResponse.json({
+    live,
+    liveError,
+    deployedTotalUsd: summary.deployedTotalUsd,
+    liquidatedCount: summary.liquidatedCount,
+    survivedCount: summary.survivedCount,
+    history,
+  });
+}
+```
 
 `app/api/rewards/route.ts`:
 ```ts
@@ -889,12 +1074,12 @@ Expected: build succeeds; routes compiled.
 
 ```bash
 git add lib/kv.ts app/api
-git commit -m "feat: rewards, price, and position API routes"
+git commit -m "feat: rewards, price, position, and cron-snapshot API routes"
 ```
 
 ---
 
-### Task 9: Shared UI primitives + risk disclaimer
+### Task 10: Shared UI primitives + risk disclaimer
 
 **Files:**
 - Create: `components/StatCard.tsx`, `components/Disclaimer.tsx`, `lib/constants.ts`, `components/Disclaimer.test.tsx`
@@ -933,7 +1118,7 @@ Expected: FAIL — cannot find module `./Disclaimer`.
 `lib/constants.ts`:
 ```ts
 export const RISK_DISCLAIMER =
-  "Not financial advice. AnsemLife uses 10x leverage — a roughly 9–10% adverse price move can liquidate the entire position to zero. Creator rewards are variable and not guaranteed. You can lose money. Position figures shown are self-reported by the operator.";
+  "Not financial advice. AnsemLife uses 10x leverage — a roughly 9–10% adverse price move can liquidate the entire position to zero. Creator rewards are variable and not guaranteed. You can lose money. Position data is read live from AsterDex; AsterDex is the source of truth, not a guarantee of outcome.";
 ```
 
 `components/Disclaimer.tsx`:
@@ -976,14 +1161,14 @@ git commit -m "feat: StatCard primitive and risk disclaimer component"
 
 ---
 
-### Task 10: Landing page
+### Task 11: Landing page
 
 **Files:**
 - Modify: `app/page.tsx`
 - Create: `components/HowItWorks.tsx`
 
 **Interfaces:**
-- Consumes: `<Disclaimer />` (T9), `RISK_DISCLAIMER` (T9), env `REWARD_WALLET_ADDRESS` for the Solscan link.
+- Consumes: `<Disclaimer />` (T10), env `REWARD_WALLET_ADDRESS` for the Solscan link.
 - Produces: the public landing page (server component).
 
 - [ ] **Step 1: Build the HowItWorks component**
@@ -992,8 +1177,8 @@ git commit -m "feat: StatCard primitive and risk disclaimer component"
 ```tsx
 const STEPS = [
   { n: "1", title: "Coin earns rewards", body: "The AnsemLife pump.fun coin accrues creator rewards on every trade." },
-  { n: "2", title: "Rewards withdrawn", body: "Rewards are collected to a public Solana wallet — verifiable on-chain." },
-  { n: "3", title: "Deployed into a 10x long", body: "Collected rewards fund a 10x long on the target token via KCEX." },
+  { n: "2", title: "Rewards deposited", body: "Rewards are collected to a public Solana wallet and deposited to AsterDex." },
+  { n: "3", title: "Deployed into a 10x long", body: "Collected rewards fund a 10x long on the target token, read live via a read-only key." },
 ];
 
 export function HowItWorks() {
@@ -1026,7 +1211,7 @@ export default function Home() {
       <header className="space-y-4">
         <h1 className="text-5xl font-extrabold tracking-tight">AnsemLife</h1>
         <p className="text-xl text-white/70 max-w-2xl">
-          Every creator reward from the AnsemLife coin is deployed into a 10x long on the target token. Transparent, on-chain, self-reported.
+          Every creator reward from the AnsemLife coin is deployed into a 10x long on the target token, read live from AsterDex. Transparent and on-chain.
         </p>
         <div className="flex gap-3">
           <Link href="/dashboard" className="rounded-lg bg-emerald-500 px-5 py-2 font-semibold text-black">View the live dashboard</Link>
@@ -1062,13 +1247,13 @@ git commit -m "feat: landing page with how-it-works, transparency, disclaimer"
 
 ---
 
-### Task 11: Dashboard page (client data fetching)
+### Task 12: Dashboard page (live data fetching)
 
 **Files:**
 - Create: `app/dashboard/page.tsx`, `components/PositionPanel.tsx`, `lib/format.ts`, `lib/format.test.ts`
 
 **Interfaces:**
-- Consumes: `GET /api/rewards`, `GET /api/price`, `GET /api/position` (T8); `<StatCard />`, `<Disclaimer />` (T9).
+- Consumes: `GET /api/rewards`, `GET /api/price`, `GET /api/position` (T9); `<StatCard />`, `<Disclaimer />` (T10).
 - Produces:
   - `lib/format.ts`: `usd(n: number | null): string`, `sol(n: number): string`, `pct(n: number): string`.
   - Dashboard page (client component) showing live stats + position panel + disclaimer.
@@ -1123,24 +1308,26 @@ Expected: PASS (2 tests).
 ```tsx
 import { usd } from "@/lib/format";
 
-type Current = {
-  leverage: number; entryPrice: number; liquidationPrice: number;
-  pnlUsd: number | null; status: string;
+type Live = {
+  status: string; side: string; leverage: number; entryPrice: number;
+  liquidationPrice: number; unrealizedPnlUsd: number; timestamp: string;
 } | null;
 
-export function PositionPanel({ current, lastUpdated }: { current: Current; lastUpdated: string | null }) {
-  if (!current) return <div className="text-white/50">No position reported yet.</div>;
+export function PositionPanel({ live, liveError }: { live: Live; liveError: string | null }) {
+  if (!live) return <div className="text-white/50">No position data yet{liveError ? ` (${liveError})` : ""}.</div>;
   return (
     <div className="rounded-xl border border-white/10 p-5 space-y-2">
       <div className="flex justify-between">
-        <span className="font-semibold">Current position ({current.status})</span>
-        <span className="text-xs text-white/40">{lastUpdated ? `updated ${lastUpdated}` : ""}</span>
+        <span className="font-semibold">Live position — {live.side} ({live.status})</span>
+        <span className="text-xs text-white/40">
+          {liveError ? `stale: ${liveError}` : `as of ${live.timestamp}`}
+        </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-        <div><div className="text-white/40">Leverage</div><div>{current.leverage}x</div></div>
-        <div><div className="text-white/40">Entry</div><div>{usd(current.entryPrice)}</div></div>
-        <div><div className="text-white/40">Liq. price</div><div>{usd(current.liquidationPrice)}</div></div>
-        <div><div className="text-white/40">PnL</div><div>{usd(current.pnlUsd)}</div></div>
+        <div><div className="text-white/40">Leverage</div><div>{live.leverage}x</div></div>
+        <div><div className="text-white/40">Entry</div><div>{usd(live.entryPrice)}</div></div>
+        <div><div className="text-white/40">Liq. price</div><div>{usd(live.liquidationPrice)}</div></div>
+        <div><div className="text-white/40">Unrealized PnL</div><div>{usd(live.unrealizedPnlUsd)}</div></div>
       </div>
     </div>
   );
@@ -1158,10 +1345,11 @@ import { Disclaimer } from "@/components/Disclaimer";
 import { PositionPanel } from "@/components/PositionPanel";
 import { usd, sol } from "@/lib/format";
 
+// Page-boundary JSON from internal API routes; typed loosely on purpose.
 type State = {
   rewards?: { sol: number; error?: string };
   price?: { priceUsd: number; marketCapUsd: number | null; symbol: string; error?: string };
-  position?: { current: any; deployedTotalUsd: number; liquidatedCount: number; survivedCount: number; history: any[] };
+  position?: { live: any; liveError: string | null; deployedTotalUsd: number; liquidatedCount: number; survivedCount: number; history: any[] };
 };
 
 async function getJson(url: string) {
@@ -1178,7 +1366,6 @@ export default function Dashboard() {
   }, []);
 
   const pos = s.position;
-  const current = pos?.current ?? null;
   return (
     <main className="mx-auto max-w-5xl px-6 py-12 space-y-8">
       <h1 className="text-3xl font-bold">Live Dashboard</h1>
@@ -1188,10 +1375,10 @@ export default function Dashboard() {
         <StatCard
           label={`Target price${s.price?.symbol ? ` (${s.price.symbol})` : ""}`}
           value={s.price?.error ? "—" : usd(s.price?.priceUsd ?? null)}
-          sub={pos ? `${pos.survivedCount} survived · ${pos.liquidatedCount} liquidated` : undefined}
+          sub={pos ? `${pos.survivedCount} open snapshots · ${pos.liquidatedCount} liquidations` : undefined}
         />
       </section>
-      <PositionPanel current={current} lastUpdated={current?.timestamp ?? null} />
+      <PositionPanel live={pos?.live ?? null} liveError={pos?.liveError ?? null} />
       <Disclaimer />
     </main>
   );
@@ -1214,107 +1401,35 @@ git commit -m "feat: live dashboard with stats, position panel, formatters"
 
 ---
 
-### Task 12: Admin page
+### Task 13: Vercel cron config + README
 
 **Files:**
-- Create: `app/admin/page.tsx`
+- Create: `vercel.json`, `README.md`
 
 **Interfaces:**
-- Consumes: `POST /api/position` (T8).
-- Produces: a password-gated client form that submits a `PositionInput`.
+- Consumes: `POST /api/cron/snapshot` (T9).
+- Produces: scheduled snapshotting + setup/deploy docs.
 
-- [ ] **Step 1: Build the admin page**
+- [ ] **Step 1: Add the Vercel cron schedule**
 
-`app/admin/page.tsx`:
-```tsx
-"use client";
-import { useState } from "react";
-
-const FIELDS: { key: string; type: string }[] = [
-  { key: "leverage", type: "number" }, { key: "entryPrice", type: "number" },
-  { key: "sizeUsd", type: "number" }, { key: "marginUsd", type: "number" },
-  { key: "liquidationPrice", type: "number" }, { key: "pnlUsd", type: "number" },
-];
-
-export default function Admin() {
-  const [password, setPassword] = useState("");
-  const [status, setStatus] = useState<"open" | "liquidated" | "closed">("open");
-  const [vals, setVals] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState("");
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg("Submitting…");
-    const body = {
-      status, side: "long",
-      leverage: Number(vals.leverage), entryPrice: Number(vals.entryPrice),
-      sizeUsd: Number(vals.sizeUsd), marginUsd: Number(vals.marginUsd),
-      liquidationPrice: Number(vals.liquidationPrice),
-      pnlUsd: vals.pnlUsd === "" || vals.pnlUsd === undefined ? null : Number(vals.pnlUsd),
-    };
-    const res = await fetch("/api/position", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-password": password },
-      body: JSON.stringify(body),
-    });
-    setMsg(res.ok ? "Saved." : `Error: ${(await res.json()).error ?? res.status}`);
-  }
-
-  return (
-    <main className="mx-auto max-w-md px-6 py-12 space-y-4">
-      <h1 className="text-2xl font-bold">Admin — update position</h1>
-      <form onSubmit={submit} className="space-y-3">
-        <input className="w-full bg-white/10 rounded p-2" type="password" placeholder="Admin password"
-          value={password} onChange={(e) => setPassword(e.target.value)} />
-        <select className="w-full bg-white/10 rounded p-2" value={status}
-          onChange={(e) => setStatus(e.target.value as typeof status)}>
-          <option value="open">open</option>
-          <option value="liquidated">liquidated</option>
-          <option value="closed">closed</option>
-        </select>
-        {FIELDS.map((f) => (
-          <input key={f.key} className="w-full bg-white/10 rounded p-2" type={f.type} step="any"
-            placeholder={f.key} value={vals[f.key] ?? ""}
-            onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} />
-        ))}
-        <button className="w-full rounded bg-emerald-500 text-black font-semibold py-2" type="submit">Save</button>
-      </form>
-      {msg ? <p className="text-sm text-white/70">{msg}</p> : null}
-    </main>
-  );
+`vercel.json`:
+```json
+{
+  "crons": [
+    { "path": "/api/cron/snapshot", "schedule": "*/15 * * * *" }
+  ]
 }
 ```
 
-- [ ] **Step 2: Verify build**
+Note: Vercel Cron sends a GET by default; this route is POST-only and checks `Authorization: Bearer $CRON_SECRET`. Configure the cron to send the `Authorization` header via project settings, or add a thin `GET` handler in `app/api/cron/snapshot/route.ts` that calls the same logic and verifies `CRON_SECRET` — keep whichever the deploy target supports. (Vercel injects `CRON_SECRET` as the bearer when set in env.)
 
-Run: `npm run build`
-Expected: `/admin` route compiles.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add app/admin/page.tsx
-git commit -m "feat: password-gated admin position-update form"
-```
-
----
-
-### Task 13: README + deployment docs
-
-**Files:**
-- Create: `README.md`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: setup/deploy documentation.
-
-- [ ] **Step 1: Write the README**
+- [ ] **Step 2: Write the README**
 
 `README.md`:
 ```markdown
 # AnsemLife
 
-Transparency dashboard: creator rewards from a pump.fun coin, deployed into a 10x long on a target token (KCEX). The site proves and narrates; trades are executed manually and published via the admin page.
+Transparency dashboard: creator rewards from a pump.fun coin, deployed into a 10x long on a target token via **AsterDex**. The site reads the live position with a **read-only** AsterDex API key — it never places trades.
 
 ## Local setup
 1. `npm install`
@@ -1328,7 +1443,10 @@ Transparency dashboard: creator rewards from a pump.fun coin, deployed into a 10
 | `REWARD_WALLET_ADDRESS` | Solana wallet receiving creator rewards |
 | `TARGET_TOKEN_PAIR` | DexScreener pair id/URL for the target token |
 | `SOLANA_RPC_URL` | Solana RPC endpoint (Helius etc.) |
-| `ADMIN_PASSWORD` | Password for `/admin` |
+| `ASTER_BASE_URL` | AsterDex API base (`https://fapi.asterdex.com`) |
+| `ASTER_API_KEY` / `ASTER_API_SECRET` | **Read-only** AsterDex key (no TRADE permission) |
+| `ASTER_SYMBOL` | AsterDex perp symbol for the target token (e.g. `ANSEMUSDT`) |
+| `CRON_SECRET` | Bearer token guarding `/api/cron/snapshot` |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Vercel KV credentials |
 
 ## Test
@@ -1337,18 +1455,18 @@ Transparency dashboard: creator rewards from a pump.fun coin, deployed into a 10
 ## Deploy (Vercel)
 1. Push to GitHub, import in Vercel.
 2. Add a Vercel KV store (sets `KV_*` automatically).
-3. Set all other env vars in project settings.
-4. Deploy. Update positions at `/admin`.
+3. Set all other env vars (use a **read-only** Aster key).
+4. Deploy. The cron in `vercel.json` snapshots the position every 15 min for the history log.
 
 ## Important
-This involves 10x leverage. A ~9–10% adverse move liquidates the position. Position figures are self-reported. Not financial advice.
+This involves 10x leverage. A ~9–10% adverse move liquidates the position. The site is read-only and never trades; AsterDex is the source of truth. Not financial advice. **Before launch, confirm the target token is listed as a perp on AsterDex (`ASTER_SYMBOL`).**
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add README.md
-git commit -m "docs: README with setup, env, and deploy instructions"
+git add vercel.json README.md
+git commit -m "docs: Vercel cron config + README with setup and deploy"
 ```
 
 ---
@@ -1356,17 +1474,18 @@ git commit -m "docs: README with setup, env, and deploy instructions"
 ## Self-Review
 
 **Spec coverage:**
-- §1 Concept/scope → landing (T10) + narrative copy. ✓
-- §2 Architecture (Next.js, API routes, admin) → T1, T8, T12. ✓
-- §3 Feeds: rewards (T6/T8), price (T5/T8), manual position (T7/T8). ✓
-- §4 Pages: landing (T10), dashboard + history surfaced via `/api/position` (T11), admin (T12). ✓
-- §5 Data model + append-only immutable store → T3, T7. ✓
-- §6 Config via env, fail-fast → T2. ✓
-- §7 Risk disclaimer (verbatim, landing + dashboard) → T9 constant + T10/T11 placement. ✓
-- §9 Testing (unit/integration) → tests in T2–T9, T11; route integration in T8. ✓
+- §1 Concept/scope (Aster, read-only, no admin) → landing (T11) + routes (T9). ✓
+- §2 Architecture (Next.js, routes, cron, no admin UI) → T1, T9, T13. ✓
+- §3 Feeds: rewards (T6/T9), price (T5/T9), live Aster position (T7/T9), history snapshots (T8/T9 cron). ✓
+- §4 Pages: landing (T11), dashboard + live position + history-derived counts (T12). ✓
+- §5 Data model (`PositionSnapshot`) + append-only store → T3, T8. ✓
+- §6 Config via env (incl. Aster + cron) → T2. ✓
+- §7 Risk disclaimer (verbatim, landing + dashboard) → T10 constant + T11/T12 placement. ✓
+- §8 Decisions (Aster venue, read-only) → reflected throughout. ✓
+- §9 Testing (unit/integration incl. signing, normalization, cron auth) → T2–T10, T12. ✓
 
-**Placeholder scan:** No TBD/TODO; every code step has full code. The dashboard uses `any` for the cross-route JSON blobs at the page boundary only (documented trade-off; `lib/` stays strict). Acceptable for v1 page glue.
+**Placeholder scan:** No TBD/TODO; every code step has full code. `any` appears only at the dashboard page boundary (documented) for cross-route JSON. The T13 cron note offers a concrete GET-handler fallback rather than a vague "handle it".
 
-**Type consistency:** `PositionRecord`/`PositionInput` defined in T3 and reused consistently in T7/T8. `KvLike` defined in T7, implemented in T8 (`lib/kv.ts`). `summarize` return shape matches dashboard consumption in T11. API JSON contracts in T8 match fetch usage in T11.
+**Type consistency:** `PositionSnapshot`/`PositionSnapshotSchema` defined in T3, reused in T7 (normalize), T8 (store), T9 (routes). `KvLike` defined in T8, implemented in T9 (`lib/kv.ts`). `AsterCreds`/`fetchAsterPosition` signature in T7 matches calls in T9. `summarize` return shape (`latest`, `deployedTotalUsd`, `liquidatedCount`, `survivedCount`) matches T9 mapping and T12 consumption. `verifyBearer` (T4) matches T9 usage. API JSON contracts in T9 match fetch usage in T12.
 
-**Note on history depth:** spec §4 calls for a full history log view. `/api/position` returns `history` (T8) and the dashboard consumes summary counts; a dedicated history *table* UI is intentionally minimal in v1 (counts + current). If a full per-row history table is wanted, it's a small additive task on top of the returned `history` array — flagged for the execution phase.
+**Gating assumption surfaced:** README + spec §8 both note the target token must be listed as a perp on AsterDex (`ASTER_SYMBOL`) — a deploy-time check, not a code task.
