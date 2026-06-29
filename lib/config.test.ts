@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { loadConfig } from "./config";
+import { loadConfig, loadTradeConfig } from "./config";
 
 const full = {
   ANSEMLIFE_COIN_MINT: "mint", REWARD_WALLET_ADDRESS: "wallet",
@@ -19,5 +19,18 @@ describe("loadConfig", () => {
   it("throws listing every missing key", () => {
     expect(() => loadConfig({})).toThrow(/ANSEMLIFE_COIN_MINT/);
     expect(() => loadConfig({ ...full, ASTER_API_SECRET: "" })).toThrow(/ASTER_API_SECRET/);
+  });
+});
+
+describe("loadTradeConfig", () => {
+  it("loads the trade key pair", () => {
+    expect(loadTradeConfig({ ASTER_TRADE_API_KEY: "k", ASTER_TRADE_API_SECRET: "s" })).toEqual({
+      tradeApiKey: "k",
+      tradeApiSecret: "s",
+    });
+  });
+  it("throws listing missing vars", () => {
+    expect(() => loadTradeConfig({})).toThrow(/ASTER_TRADE_API_KEY/);
+    expect(() => loadTradeConfig({ ASTER_TRADE_API_KEY: "k" })).toThrow(/ASTER_TRADE_API_SECRET/);
   });
 });
