@@ -3,6 +3,7 @@ import { PositionSnapshotSchema, type PositionSnapshot } from "./position";
 export type KvLike = {
   get<T>(key: string): Promise<T | null>;
   set(key: string, value: unknown): Promise<unknown>;
+  setNx(key: string, value: unknown, ttlMs: number): Promise<boolean>;
 };
 
 const HISTORY_KEY = "ansemlife:snapshot-history";
@@ -23,4 +24,9 @@ export async function appendSnapshot(kv: KvLike, snapshot: PositionSnapshot): Pr
   const capped = next.slice(-MAX_HISTORY);
   await kv.set(HISTORY_KEY, capped);
   return capped;
+}
+
+// Best-effort distributed lock. TTL auto-expires so a crashed run cannot wedge.
+export async function acquireLock(kv: KvLike, key: string, ttlMs: number): Promise<boolean> {
+  return kv.setNx(key, "1", ttlMs);
 }

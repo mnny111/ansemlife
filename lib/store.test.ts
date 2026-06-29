@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getHistory, appendSnapshot, MAX_HISTORY, type KvLike } from "./store";
+import { getHistory, appendSnapshot, MAX_HISTORY, acquireLock, type KvLike } from "./store";
 import type { PositionSnapshot } from "./position";
 
 function memKv(): KvLike {
@@ -7,6 +7,11 @@ function memKv(): KvLike {
   return {
     get: async <T>(k: string) => (m.has(k) ? (m.get(k) as T) : null),
     set: async (k, v) => void m.set(k, v),
+    setNx: async (k, v) => {
+      if (m.has(k)) return false;
+      m.set(k, v);
+      return true;
+    },
   };
 }
 const snap: PositionSnapshot = {
@@ -44,5 +49,22 @@ describe("snapshot store", () => {
     expect(result[2].timestamp).toBe(s3.timestamp);
     // Cap is far above 3; assert the exported constant is the guard.
     expect(result.length).toBeLessThanOrEqual(MAX_HISTORY);
+  });
+});
+
+describe("acquireLock", () => {
+  it("returns true when the lock is free, false when held", async () => {
+    const store = new Map<string, unknown>();
+    const kv = {
+      get: async <T>(k: string) => (store.has(k) ? (store.get(k) as T) : null),
+      set: async (k: string, v: unknown) => store.set(k, v),
+      setNx: async (k: string, v: unknown) => {
+        if (store.has(k)) return false;
+        store.set(k, v);
+        return true;
+      },
+    };
+    expect(await acquireLock(kv, "lock", 1000)).toBe(true);
+    expect(await acquireLock(kv, "lock", 1000)).toBe(false);
   });
 });
