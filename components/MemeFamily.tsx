@@ -53,12 +53,12 @@ export function MemeFamily() {
         }}
       />
       <div className="text-center">
-        <p className="text-xs font-semibold uppercase tracking-widest text-accent">The herd</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-accent">Called by Ansem</p>
         <h2 className="mt-2 font-display text-4xl uppercase tracking-tight sm:text-5xl">
-          One big <span className="font-serif italic normal-case text-gold">friendly</span> family.
+          The memes he <span className="font-serif italic normal-case text-gold">called</span>.
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm text-white/60">
-          Ansem&apos;s memes, all under one roof. The bull does the heavy lifting — the herd keeps it comfy.
+          Not Ansem&apos;s coins — the memes he shilled along the way. All under one roof, keeping it friendly while the bull runs.
         </p>
       </div>
 
