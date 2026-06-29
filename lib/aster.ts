@@ -83,3 +83,30 @@ export function computeDeployQty(args: {
   const notional = availableBalance * deployFraction * leverage;
   return roundToStep(notional / markPrice, step);
 }
+
+export type AccountBalance = { walletBalance: number; availableBalance: number; timestamp: string };
+
+const AccountSchema = z.object({
+  totalWalletBalance: z.string(),
+  availableBalance: z.string(),
+});
+
+export async function fetchAccountBalance(
+  creds: AsterCreds,
+  opts: { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string } = {},
+): Promise<AccountBalance> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const nowMs = opts.nowMs ?? Date.now();
+  const timestamp = opts.timestamp ?? new Date(nowMs).toISOString();
+  const query = signQuery({ timestamp: nowMs }, creds.apiSecret);
+  const url = `${creds.baseUrl}/fapi/v2/account?${query}`;
+  const res = await fetchImpl(url, { headers: { "X-MBX-APIKEY": creds.apiKey } });
+  if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
+  const parsed = AccountSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("AsterDex returned malformed account response");
+  return {
+    walletBalance: Number(parsed.data.totalWalletBalance),
+    availableBalance: Number(parsed.data.availableBalance),
+    timestamp,
+  };
+}

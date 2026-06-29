@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty } from "./aster";
+import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance } from "./aster";
 import { createHmac } from "node:crypto";
 
 describe("signQuery", () => {
@@ -105,5 +105,28 @@ describe("computeDeployQty", () => {
     expect(
       computeDeployQty({ availableBalance: 100, deployFraction: 0.95, leverage: 10, markPrice: 0, step: 0.1 }),
     ).toBe(0);
+  });
+});
+
+describe("fetchAccountBalance", () => {
+  it("parses wallet and available balance from /fapi/v2/account", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(String(url)).toContain("/fapi/v2/account");
+      expect(String(url)).toContain("signature=");
+      expect((init?.headers as Record<string, string>)["X-MBX-APIKEY"]).toBe("pub");
+      return new Response(JSON.stringify({ totalWalletBalance: "1234.50", availableBalance: "1000.00" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await fetchAccountBalance(
+      { baseUrl: "https://x", apiKey: "pub", apiSecret: "sec" },
+      { fetchImpl, nowMs: 1000, timestamp: "2026-06-29T00:00:00.000Z" },
+    );
+    expect(out).toEqual({ walletBalance: 1234.5, availableBalance: 1000, timestamp: "2026-06-29T00:00:00.000Z" });
+  });
+
+  it("throws on non-ok response", async () => {
+    const fetchImpl = vi.fn(async () => new Response("nope", { status: 401 })) as unknown as typeof fetch;
+    await expect(
+      fetchAccountBalance({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, { fetchImpl }),
+    ).rejects.toThrow("AsterDex error: 401");
   });
 });
