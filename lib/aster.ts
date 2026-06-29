@@ -135,3 +135,28 @@ export async function recentPriceMove(
   const pctMove = low > 0 ? ((high - low) / low) * 100 : 0;
   return { pctMove, lastPrice };
 }
+
+const ExchangeInfoSchema = z.object({
+  symbols: z.array(
+    z.object({
+      symbol: z.string(),
+      filters: z.array(z.object({ filterType: z.string(), stepSize: z.string().optional() })),
+    }),
+  ),
+});
+
+export async function getSymbolStep(
+  creds: AsterCreds,
+  symbol: string,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<number> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const res = await fetchImpl(`${creds.baseUrl}/fapi/v1/exchangeInfo`);
+  if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
+  const parsed = ExchangeInfoSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("AsterDex returned malformed exchangeInfo response");
+  const sym = parsed.data.symbols.find((s) => s.symbol === symbol);
+  const lot = sym?.filters.find((f) => f.filterType === "LOT_SIZE" && f.stepSize);
+  if (!lot?.stepSize) throw new Error(`no LOT_SIZE step for ${symbol}`);
+  return Number(lot.stepSize);
+}

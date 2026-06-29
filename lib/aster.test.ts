@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance, recentPriceMove } from "./aster";
+import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance, recentPriceMove, getSymbolStep } from "./aster";
 import { createHmac } from "node:crypto";
 
 describe("signQuery", () => {
@@ -153,5 +153,28 @@ describe("recentPriceMove", () => {
     await expect(
       recentPriceMove({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "S", 5, { fetchImpl }),
     ).rejects.toThrow("AsterDex error: 500");
+  });
+});
+
+describe("getSymbolStep", () => {
+  const info = {
+    symbols: [
+      { symbol: "OTHER", filters: [{ filterType: "LOT_SIZE", stepSize: "1" }] },
+      { symbol: "ANSEMUSDT", filters: [{ filterType: "PRICE_FILTER", tickSize: "0.01" }, { filterType: "LOT_SIZE", stepSize: "0.001" }] },
+    ],
+  };
+  it("returns the LOT_SIZE step for the symbol", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      expect(String(url)).toContain("/fapi/v1/exchangeInfo");
+      return new Response(JSON.stringify(info), { status: 200 });
+    }) as unknown as typeof fetch;
+    const step = await getSymbolStep({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "ANSEMUSDT", { fetchImpl });
+    expect(step).toBe(0.001);
+  });
+  it("throws when the symbol is absent", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ symbols: [] }), { status: 200 })) as unknown as typeof fetch;
+    await expect(
+      getSymbolStep({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "ANSEMUSDT", { fetchImpl }),
+    ).rejects.toThrow("no LOT_SIZE step for ANSEMUSDT");
   });
 });
