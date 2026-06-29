@@ -20,6 +20,7 @@ describe("normalizePosition", () => {
     expect(s).toEqual({
       timestamp: "2026-06-29T00:00:00.000Z", symbol: "ANSEMUSDT", status: "open", side: "long",
       leverage: 10, entryPrice: 1.0, sizeUsd: 120, marginUsd: 10, liquidationPrice: 0.9, unrealizedPnlUsd: 20,
+      markPrice: 1.2,
     });
   });
   it("maps a flat position as closed", () => {

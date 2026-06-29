@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { HowItWorks } from "@/components/HowItWorks";
 import { Disclaimer } from "@/components/Disclaimer";
+import { PriceChart } from "@/components/PriceChart";
 
 export default function Home() {
   const wallet = process.env.REWARD_WALLET_ADDRESS ?? "";
@@ -16,6 +17,10 @@ export default function Home() {
         </div>
       </header>
       <HowItWorks />
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Ansem token chart</h2>
+        <PriceChart height={420} />
+      </section>
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Transparency</h2>
         <p className="text-sm text-white/60">

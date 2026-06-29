@@ -40,6 +40,7 @@ export function normalizePosition(raw: unknown, timestamp: string): PositionSnap
     marginUsd: Number(r.isolatedMargin),
     liquidationPrice: Number(r.liquidationPrice),
     unrealizedPnlUsd: Number(r.unRealizedProfit),
+    markPrice: mark,
   };
   return PositionSnapshotSchema.parse(snapshot);
 }

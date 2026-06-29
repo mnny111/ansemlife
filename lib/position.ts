@@ -11,6 +11,8 @@ export const PositionSnapshotSchema = z.object({
   marginUsd: z.number().nonnegative(),
   liquidationPrice: z.number().nonnegative(),
   unrealizedPnlUsd: z.number(),
+  // Optional so historical snapshots written before this field still validate.
+  markPrice: z.number().nonnegative().optional(),
 });
 
 export type PositionSnapshot = z.infer<typeof PositionSnapshotSchema>;
