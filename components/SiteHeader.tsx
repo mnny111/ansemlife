@@ -17,12 +17,6 @@ export function SiteHeader() {
           <Link href="/dashboard" className="rounded-lg px-3 py-1.5 text-white/70 hover:text-white">
             Dashboard
           </Link>
-          <Link
-            href="/dashboard"
-            className="ml-2 rounded-lg bg-accent px-4 py-1.5 font-semibold text-black hover:bg-accent-dim"
-          >
-            Launch App
-          </Link>
         </div>
       </nav>
     </header>
