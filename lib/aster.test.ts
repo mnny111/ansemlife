@@ -194,6 +194,12 @@ describe("setLeverage", () => {
       setLeverage({ baseUrl: "https://x", apiKey: "trd", apiSecret: "s" }, "ANSEMUSDT", 10, { fetchImpl, nowMs: 1 }),
     ).resolves.toBeUndefined();
   });
+  it("throws on a non-ok response", async () => {
+    const fetchImpl = vi.fn(async () => new Response("x", { status: 500 })) as unknown as typeof fetch;
+    await expect(
+      setLeverage({ baseUrl: "https://x", apiKey: "trd", apiSecret: "s" }, "ANSEMUSDT", 10, { fetchImpl, nowMs: 1 }),
+    ).rejects.toThrow("AsterDex leverage error: 500");
+  });
 });
 
 describe("openOrAddLong", () => {
