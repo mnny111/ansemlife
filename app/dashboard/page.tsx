@@ -4,6 +4,7 @@ import { StatCard } from "@/components/StatCard";
 import { Disclaimer } from "@/components/Disclaimer";
 import { PriceChart } from "@/components/PriceChart";
 import { PositionTable, type PositionRow } from "@/components/PositionTable";
+import { Receipts } from "@/components/Receipts";
 import { usd, sol } from "@/lib/format";
 
 // Page-boundary JSON from internal API routes; typed loosely on purpose.
@@ -16,7 +17,7 @@ type State = {
     deployedTotalUsd: number;
     liquidatedCount: number;
     survivedCount: number;
-    history: any[];
+    history: unknown[];
   };
 };
 
@@ -63,14 +64,10 @@ export default function Dashboard() {
   const pos = s.position;
   const livePosition = pos?.live ?? (preview ? PREVIEW_ROW : null);
   const hasCounts = typeof pos?.survivedCount === "number";
-  const history: any[] = pos?.history ?? [];
-  const sortedHistory = [...history].sort((a, b) =>
-    String(b.timestamp).localeCompare(String(a.timestamp)),
-  );
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-12 space-y-8">
-      <h1 className="text-3xl font-bold">Live Dashboard</h1>
+    <main className="mx-auto max-w-6xl space-y-10 px-6 py-12">
+      <h1 className="font-display text-5xl font-black tracking-tight">Live Dashboard</h1>
 
       <section className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Rewards collected" value={s.rewards?.error ? "—" : sol(s.rewards?.sol ?? 0)} />
@@ -82,53 +79,20 @@ export default function Dashboard() {
         />
       </section>
 
-      <section className="space-y-2">
-        <h2 className="text-xl font-semibold">Chart</h2>
+      <section className="space-y-3">
+        <h2 className="font-display text-2xl font-bold">Chart</h2>
         <PriceChart height={460} />
       </section>
 
-      <section className="space-y-2">
-        <h2 className="text-xl font-semibold">
-          Position{preview && !pos?.live ? <span className="ml-2 text-xs text-amber-400/80">preview (sample data)</span> : null}
+      <section className="space-y-3">
+        <h2 className="font-display text-2xl font-bold">
+          Position
+          {preview && !pos?.live ? <span className="ml-2 text-xs text-amber-400/80">preview (sample data)</span> : null}
         </h2>
         <PositionTable live={livePosition} liveError={pos?.liveError ?? null} />
       </section>
 
-      <section className="space-y-2">
-        <h2 className="text-xl font-semibold">History</h2>
-        {sortedHistory.length === 0 ? (
-          <p className="text-sm text-white/50">No snapshots recorded yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="text-left text-white/50 border-b border-white/10">
-                  <th className="py-2 pr-4 font-medium">Time</th>
-                  <th className="py-2 pr-4 font-medium">Status</th>
-                  <th className="py-2 pr-4 font-medium">Side</th>
-                  <th className="py-2 pr-4 font-medium">Leverage</th>
-                  <th className="py-2 pr-4 font-medium">Entry</th>
-                  <th className="py-2 font-medium">Unrealized PnL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedHistory.map((snap, i) => (
-                  <tr key={i} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="py-2 pr-4 text-white/60 whitespace-nowrap">
-                      {snap.timestamp ? new Date(snap.timestamp).toLocaleString() : "—"}
-                    </td>
-                    <td className="py-2 pr-4 capitalize">{snap.status ?? "—"}</td>
-                    <td className="py-2 pr-4 capitalize">{snap.side ?? "—"}</td>
-                    <td className="py-2 pr-4">{snap.leverage != null ? `${snap.leverage}x` : "—"}</td>
-                    <td className="py-2 pr-4">{usd(snap.entryPrice ?? null)}</td>
-                    <td className="py-2">{usd(snap.unrealizedPnlUsd ?? null)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <Receipts sample={preview} />
 
       <Disclaimer />
     </main>
