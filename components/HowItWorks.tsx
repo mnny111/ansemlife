@@ -25,8 +25,8 @@ export function HowItWorks() {
     <section className="space-y-8">
       <div className="text-center">
         <p className="text-xs font-semibold uppercase tracking-widest text-accent">How it works</p>
-        <h2 className="mt-2 font-display text-4xl font-black tracking-tight sm:text-5xl">
-          Three steps into the long.
+        <h2 className="mt-2 font-display text-4xl uppercase tracking-tight sm:text-5xl">
+          Three steps into the <span className="text-accent">long.</span>
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm text-white/60">
           Every creator reward fee is swept on-chain and deployed into a 10x long on Ansem&apos;s coin — automatically.

@@ -1,10 +1,12 @@
 @import "tailwindcss";
 
 @theme {
-  --color-accent: #ffcc00;
-  --color-accent-dim: #e0b400;
+  --color-accent: #9dff1a;
+  --color-accent-dim: #7ed400;
+  --color-gold: #e8b62c;
   --font-sans: var(--font-inter);
-  --font-display: var(--font-fraunces);
+  --font-display: var(--font-archivo);
+  --font-serif: var(--font-fraunces);
 }
 
 html {
@@ -29,7 +31,7 @@ body {
   animation: marquee 32s linear infinite;
 }
 
-/* Soft radial glow behind the hero */
+/* Soft radial glow behind the hero (Black Bull green) */
 .hero-glow {
-  background: radial-gradient(60% 50% at 50% 0%, rgba(255, 204, 0, 0.14) 0%, rgba(0, 0, 0, 0) 70%);
+  background: radial-gradient(58% 50% at 50% 0%, rgba(157, 255, 26, 0.14) 0%, rgba(0, 0, 0, 0) 70%);
 }

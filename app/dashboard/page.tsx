@@ -67,7 +67,7 @@ export default function Dashboard() {
 
   return (
     <main className="mx-auto max-w-6xl space-y-10 px-6 py-12">
-      <h1 className="font-display text-5xl font-black tracking-tight">Live Dashboard</h1>
+      <h1 className="font-display text-4xl uppercase tracking-tight sm:text-5xl">Live Dashboard</h1>
 
       <section className="grid gap-4 sm:grid-cols-3">
         <StatCard label="Rewards collected" value={s.rewards?.error ? "—" : sol(s.rewards?.sol ?? 0)} />

@@ -57,8 +57,8 @@ export function Receipts({ limit, sample = false }: ReceiptsProps) {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-accent">Receipts</p>
-          <h2 className="mt-1 font-display text-4xl font-black tracking-tight sm:text-5xl">
-            Rewards that bought the long.
+          <h2 className="mt-1 font-display text-4xl uppercase tracking-tight sm:text-5xl">
+            Rewards that bought the <span className="text-accent">long.</span>
           </h2>
           <p className="mt-2 text-sm text-white/50">
             Every creator reward fee, deployed into the 10x long — on the record.
