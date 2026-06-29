@@ -3,6 +3,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { Disclaimer } from "@/components/Disclaimer";
 import { PriceChart } from "@/components/PriceChart";
 import { LiveStatsStrip } from "@/components/LiveStatsStrip";
+import { MemeMarquee, MemeFamily } from "@/components/MemeFamily";
 import { Receipts } from "@/components/Receipts";
 
 export default function Home() {
@@ -53,8 +54,13 @@ export default function Home() {
         <LiveStatsStrip />
       </div>
 
+      {/* Friendly meme strip */}
+      <MemeMarquee />
+
       <div className="mx-auto max-w-6xl space-y-24 px-6 py-24">
         <HowItWorks />
+
+        <MemeFamily />
 
         {/* CTA */}
         <section className="text-center">
