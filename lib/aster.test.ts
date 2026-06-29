@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance } from "./aster";
+import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance, recentPriceMove } from "./aster";
 import { createHmac } from "node:crypto";
 
 describe("signQuery", () => {
@@ -128,5 +128,30 @@ describe("fetchAccountBalance", () => {
     await expect(
       fetchAccountBalance({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, { fetchImpl }),
     ).rejects.toThrow("AsterDex error: 401");
+  });
+});
+
+describe("recentPriceMove", () => {
+  const klines = [
+    [0, "100", "102", "99", "101"],
+    [0, "101", "105", "100", "104"], // window high 105, low 99
+  ];
+  it("computes range pct move and last close", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      expect(String(url)).toContain("/fapi/v1/klines");
+      expect(String(url)).toContain("interval=1m");
+      expect(String(url)).toContain("limit=5");
+      return new Response(JSON.stringify(klines), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await recentPriceMove({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "ANSEMUSDT", 5, { fetchImpl });
+    // (105-99)/99*100 = 6.0606...
+    expect(out.pctMove).toBeCloseTo(6.0606, 3);
+    expect(out.lastPrice).toBe(104);
+  });
+  it("throws on non-ok", async () => {
+    const fetchImpl = vi.fn(async () => new Response("x", { status: 500 })) as unknown as typeof fetch;
+    await expect(
+      recentPriceMove({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "S", 5, { fetchImpl }),
+    ).rejects.toThrow("AsterDex error: 500");
   });
 });

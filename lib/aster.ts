@@ -110,3 +110,28 @@ export async function fetchAccountBalance(
     timestamp,
   };
 }
+
+export type PriceMove = { pctMove: number; lastPrice: number };
+
+const KlineSchema = z.array(z.tuple([z.number(), z.string(), z.string(), z.string(), z.string()]).rest(z.unknown()));
+
+export async function recentPriceMove(
+  creds: AsterCreds,
+  symbol: string,
+  windowMin: number,
+  opts: { fetchImpl?: typeof fetch } = {},
+): Promise<PriceMove> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = `${creds.baseUrl}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=${windowMin}`;
+  const res = await fetchImpl(url);
+  if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
+  const parsed = KlineSchema.safeParse(await res.json());
+  if (!parsed.success || parsed.data.length === 0) throw new Error("AsterDex returned malformed klines response");
+  const highs = parsed.data.map((k) => Number(k[2]));
+  const lows = parsed.data.map((k) => Number(k[3]));
+  const high = Math.max(...highs);
+  const low = Math.min(...lows);
+  const lastPrice = Number(parsed.data[parsed.data.length - 1][4]);
+  const pctMove = low > 0 ? ((high - low) / low) * 100 : 0;
+  return { pctMove, lastPrice };
+}
