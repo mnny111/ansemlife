@@ -160,3 +160,51 @@ export async function getSymbolStep(
   if (!lot?.stepSize) throw new Error(`no LOT_SIZE step for ${symbol}`);
   return Number(lot.stepSize);
 }
+
+async function signedPost(
+  creds: AsterCreds,
+  path: string,
+  params: Record<string, string | number>,
+  fetchImpl: typeof fetch,
+  nowMs: number,
+): Promise<Response> {
+  const query = signQuery({ ...params, timestamp: nowMs }, creds.apiSecret);
+  return fetchImpl(`${creds.baseUrl}${path}?${query}`, {
+    method: "POST",
+    headers: { "X-MBX-APIKEY": creds.apiKey },
+  });
+}
+
+export async function setLeverage(
+  creds: AsterCreds,
+  symbol: string,
+  leverage: number,
+  opts: { fetchImpl?: typeof fetch; nowMs?: number } = {},
+): Promise<void> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const nowMs = opts.nowMs ?? Date.now();
+  const res = await signedPost(creds, "/fapi/v1/leverage", { symbol, leverage }, fetchImpl, nowMs);
+  if (!res.ok) throw new Error(`AsterDex leverage error: ${res.status}`);
+}
+
+const OrderResultSchema = z.object({ orderId: z.number(), status: z.string() });
+
+export async function openOrAddLong(
+  creds: AsterCreds,
+  args: { symbol: string; quantity: number },
+  opts: { fetchImpl?: typeof fetch; nowMs?: number } = {},
+): Promise<{ orderId: number; status: string }> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const nowMs = opts.nowMs ?? Date.now();
+  const res = await signedPost(
+    creds,
+    "/fapi/v1/order",
+    { symbol: args.symbol, side: "BUY", type: "MARKET", quantity: args.quantity },
+    fetchImpl,
+    nowMs,
+  );
+  if (!res.ok) throw new Error(`AsterDex order error: ${res.status}`);
+  const parsed = OrderResultSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("AsterDex returned malformed order response");
+  return parsed.data;
+}

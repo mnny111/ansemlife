@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance, recentPriceMove, getSymbolStep } from "./aster";
+import { signQuery, normalizePosition, fetchAsterPosition, roundToStep, computeDeployQty, fetchAccountBalance, recentPriceMove, getSymbolStep, setLeverage, openOrAddLong } from "./aster";
 import { createHmac } from "node:crypto";
 
 describe("signQuery", () => {
@@ -176,5 +176,47 @@ describe("getSymbolStep", () => {
     await expect(
       getSymbolStep({ baseUrl: "https://x", apiKey: "p", apiSecret: "s" }, "ANSEMUSDT", { fetchImpl }),
     ).rejects.toThrow("no LOT_SIZE step for ANSEMUSDT");
+  });
+});
+
+describe("setLeverage", () => {
+  it("POSTs a signed leverage request", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(String(url)).toContain("/fapi/v1/leverage");
+      expect(String(url)).toContain("symbol=ANSEMUSDT");
+      expect(String(url)).toContain("leverage=10");
+      expect(String(url)).toContain("signature=");
+      expect((init?.headers as Record<string, string>)["X-MBX-APIKEY"]).toBe("trd");
+      return new Response(JSON.stringify({ leverage: 10, symbol: "ANSEMUSDT" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(
+      setLeverage({ baseUrl: "https://x", apiKey: "trd", apiSecret: "s" }, "ANSEMUSDT", 10, { fetchImpl, nowMs: 1 }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("openOrAddLong", () => {
+  it("POSTs a signed market BUY and returns orderId/status", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(String(url)).toContain("/fapi/v1/order");
+      expect(String(url)).toContain("side=BUY");
+      expect(String(url)).toContain("type=MARKET");
+      expect(String(url)).toContain("quantity=12.5");
+      return new Response(JSON.stringify({ orderId: 777, status: "NEW" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await openOrAddLong(
+      { baseUrl: "https://x", apiKey: "trd", apiSecret: "s" },
+      { symbol: "ANSEMUSDT", quantity: 12.5 },
+      { fetchImpl, nowMs: 1 },
+    );
+    expect(out).toEqual({ orderId: 777, status: "NEW" });
+  });
+  it("throws on a rejected order", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: -2019, msg: "Margin is insufficient." }), { status: 400 })) as unknown as typeof fetch;
+    await expect(
+      openOrAddLong({ baseUrl: "https://x", apiKey: "trd", apiSecret: "s" }, { symbol: "S", quantity: 1 }, { fetchImpl, nowMs: 1 }),
+    ).rejects.toThrow("AsterDex order error: 400");
   });
 });
