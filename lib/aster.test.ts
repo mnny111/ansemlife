@@ -30,6 +30,16 @@ describe("normalizePosition", () => {
     expect(normalizePosition(raw, "t").status).toBe("closed");
     expect(normalizePosition(raw, "t").side).toBe("flat");
   });
+  it("maps a short positionRisk row", () => {
+    const raw = {
+      symbol: "ANSEMUSDT", positionAmt: "-50", entryPrice: "1.0", markPrice: "1.2",
+      unRealizedProfit: "0", liquidationPrice: "1.5", leverage: "10", isolatedMargin: "10",
+    };
+    const s = normalizePosition(raw, "2026-06-29T00:00:00.000Z");
+    expect(s.side).toBe("short");
+    expect(s.status).toBe("open");
+    expect(s.sizeUsd).toBe(60);
+  });
 });
 
 describe("fetchAsterPosition", () => {
@@ -57,5 +67,17 @@ describe("fetchAsterPosition", () => {
       fetchAsterPosition({ baseUrl: "https://x", apiKey: "ak", apiSecret: "sk" }, "ANSEMUSDT",
         { fetchImpl, nowMs: 1000 }),
     ).rejects.toThrow(/401/);
+  });
+  it("throws when no matching symbol in response", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, json: async () => [
+        { symbol: "BTCUSDT", positionAmt: "100", entryPrice: "1.0", markPrice: "1.2",
+          unRealizedProfit: "20", liquidationPrice: "0.9", leverage: "10", isolatedMargin: "10" },
+      ],
+    } as Response)) as unknown as typeof fetch;
+    await expect(
+      fetchAsterPosition({ baseUrl: "https://x", apiKey: "ak", apiSecret: "sk" }, "ANSEMUSDT",
+        { fetchImpl, nowMs: 1000 }),
+    ).rejects.toThrow(/AsterDex returned no position for ANSEMUSDT/);
   });
 });
