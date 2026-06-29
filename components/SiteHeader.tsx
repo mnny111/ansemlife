@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CopyCA } from "@/components/CopyCA";
 
 export function SiteHeader() {
   return (
@@ -17,6 +18,9 @@ export function SiteHeader() {
           <Link href="/dashboard" className="rounded-lg px-3 py-1.5 text-white/70 hover:text-white">
             Dashboard
           </Link>
+          <span className="ml-2">
+            <CopyCA />
+          </span>
         </div>
       </nav>
     </header>
