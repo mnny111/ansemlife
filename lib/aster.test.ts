@@ -157,7 +157,8 @@ describe("recentPriceMove", () => {
   ];
   it("computes range pct move and last close", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      expect(String(url)).toContain("/fapi/v1/klines");
+      expect(String(url)).toContain("https://fapi.asterdex.com/fapi/v1/klines");
+      expect(String(url)).not.toContain("fapi3.");
       expect(String(url)).toContain("interval=1m");
       expect(String(url)).toContain("limit=5");
       return new Response(JSON.stringify(klines), { status: 200 });
@@ -181,7 +182,8 @@ describe("getSymbolStep", () => {
   };
   it("returns the LOT_SIZE step for the symbol", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      expect(String(url)).toContain("/fapi/v1/exchangeInfo");
+      expect(String(url)).toContain("https://fapi.asterdex.com/fapi/v1/exchangeInfo");
+      expect(String(url)).not.toContain("fapi3.");
       return new Response(JSON.stringify(info), { status: 200 });
     }) as unknown as typeof fetch;
     const step = await getSymbolStep(creds, "ANSEMUSDT", { fetchImpl });

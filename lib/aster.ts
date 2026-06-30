@@ -50,6 +50,11 @@ export async function signV3(
 
 type SignedOpts = { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string; nonceMicros?: number };
 
+// Signed V3 endpoints live on fapi3; public market data only on fapi.
+function publicBase(baseUrl: string): string {
+  return baseUrl.replace("fapi3.", "fapi.");
+}
+
 const RawRowSchema = z.object({
   symbol: z.string(),
   positionAmt: z.string(),
@@ -153,7 +158,7 @@ export async function recentPriceMove(
   opts: { fetchImpl?: typeof fetch } = {},
 ): Promise<PriceMove> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const url = `${creds.baseUrl}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=${windowMin}`;
+  const url = `${publicBase(creds.baseUrl)}/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=${windowMin}`;
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
   const parsed = KlineSchema.safeParse(await res.json());
@@ -182,7 +187,7 @@ export async function getSymbolStep(
   opts: { fetchImpl?: typeof fetch } = {},
 ): Promise<number> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const res = await fetchImpl(`${creds.baseUrl}/fapi/v1/exchangeInfo`);
+  const res = await fetchImpl(`${publicBase(creds.baseUrl)}/fapi/v1/exchangeInfo`);
   if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
   const parsed = ExchangeInfoSchema.safeParse(await res.json());
   if (!parsed.success) throw new Error("AsterDex returned malformed exchangeInfo response");
