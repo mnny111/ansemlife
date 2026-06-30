@@ -12,7 +12,7 @@ async function runSnapshot(req: Request): Promise<Response> {
   }
   try {
     const snapshot = await fetchAsterPosition(
-      { baseUrl: cfg.asterBaseUrl, apiKey: cfg.asterApiKey, apiSecret: cfg.asterApiSecret },
+      { baseUrl: cfg.asterBaseUrl, user: cfg.asterUser, signer: cfg.asterSigner, privateKey: cfg.asterPrivateKey },
       cfg.asterSymbol,
     );
     await appendSnapshot(vercelKv, snapshot);

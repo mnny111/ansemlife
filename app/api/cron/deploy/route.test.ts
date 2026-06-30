@@ -12,8 +12,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/config", () => ({
-  loadConfig: () => ({ asterBaseUrl: "https://x", asterApiKey: "ro", asterApiSecret: "ros", asterSymbol: "ANSEMUSDT", cronSecret: "secret" }),
-  loadTradeConfig: () => ({ tradeApiKey: "trd", tradeApiSecret: "trs" }),
+  loadConfig: () => ({ asterBaseUrl: "https://x", asterUser: "0xuser", asterSigner: "0xro", asterPrivateKey: "0xros", asterSymbol: "ANSEMUSDT", cronSecret: "secret" }),
+  loadTradeConfig: () => ({ tradeSigner: "0xtrd", tradePrivateKey: "0xtrs" }),
 }));
 vi.mock("@/lib/kv", () => ({ vercelKv: {} }));
 vi.mock("@/lib/store", () => ({ acquireLock: h.acquireLock, appendSnapshot: h.appendSnapshot }));
@@ -75,12 +75,12 @@ describe("GET /api/cron/deploy", () => {
     expect(body.order).toEqual({ orderId: 1, status: "NEW" });
     expect(h.setLeverage).toHaveBeenCalled();
     expect(h.openOrAddLong).toHaveBeenCalledWith(
-      { baseUrl: "https://x", apiKey: "trd", apiSecret: "trs" },
+      { baseUrl: "https://x", user: "0xuser", signer: "0xtrd", privateKey: "0xtrs" },
       { symbol: "ANSEMUSDT", quantity: 475 },
     );
     expect(h.appendSnapshot).toHaveBeenCalled();
     expect(h.fetchAsterPosition).toHaveBeenCalledWith(
-      { baseUrl: "https://x", apiKey: "ro", apiSecret: "ros" },
+      { baseUrl: "https://x", user: "0xuser", signer: "0xro", privateKey: "0xros" },
       "ANSEMUSDT",
     );
   });

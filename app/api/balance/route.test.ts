@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { fetchAccountBalance } = vi.hoisted(() => ({ fetchAccountBalance: vi.fn() }));
 
 vi.mock("@/lib/config", () => ({
-  loadConfig: () => ({ asterBaseUrl: "https://x", asterApiKey: "ro", asterApiSecret: "s" }),
+  loadConfig: () => ({ asterBaseUrl: "https://x", asterUser: "0xuser", asterSigner: "0xsigner", asterPrivateKey: "0xkey" }),
 }));
 vi.mock("@/lib/aster", () => ({ fetchAccountBalance }));
 

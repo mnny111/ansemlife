@@ -27,7 +27,12 @@ async function runDeploy(req: Request): Promise<Response> {
     if (!locked) return NextResponse.json({ skipped: "locked" });
 
     const trade = loadTradeConfig(process.env);
-    const tradeCreds = { baseUrl: cfg.asterBaseUrl, apiKey: trade.tradeApiKey, apiSecret: trade.tradeApiSecret };
+    const tradeCreds = {
+      baseUrl: cfg.asterBaseUrl,
+      user: cfg.asterUser,
+      signer: trade.tradeSigner,
+      privateKey: trade.tradePrivateKey,
+    };
     const symbol = cfg.asterSymbol;
 
     const balance = await fetchAccountBalance(tradeCreds);
@@ -50,7 +55,7 @@ async function runDeploy(req: Request): Promise<Response> {
     const order = await openOrAddLong(tradeCreds, { symbol, quantity });
 
     const snapshot = await fetchAsterPosition(
-      { baseUrl: cfg.asterBaseUrl, apiKey: cfg.asterApiKey, apiSecret: cfg.asterApiSecret },
+      { baseUrl: cfg.asterBaseUrl, user: cfg.asterUser, signer: cfg.asterSigner, privateKey: cfg.asterPrivateKey },
       symbol,
     );
     await appendSnapshot(vercelKv, snapshot);

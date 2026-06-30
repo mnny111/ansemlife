@@ -9,8 +9,8 @@ vi.mock("@/lib/kv", () => ({
 }));
 vi.mock("@/lib/config", () => ({
   loadConfig: () => ({
-    cronSecret: "cs", asterBaseUrl: "https://x", asterApiKey: "ak",
-    asterApiSecret: "sk", asterSymbol: "ANSEMUSDT",
+    cronSecret: "cs", asterBaseUrl: "https://x", asterUser: "0xuser",
+    asterSigner: "0xsigner", asterPrivateKey: "0xkey", asterSymbol: "ANSEMUSDT",
   }),
 }));
 const snapshot = {

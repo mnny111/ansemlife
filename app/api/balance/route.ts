@@ -9,8 +9,9 @@ export async function GET() {
     const cfg = loadConfig(process.env);
     const balance = await fetchAccountBalance({
       baseUrl: cfg.asterBaseUrl,
-      apiKey: cfg.asterApiKey,
-      apiSecret: cfg.asterApiSecret,
+      user: cfg.asterUser,
+      signer: cfg.asterSigner,
+      privateKey: cfg.asterPrivateKey,
     });
     return NextResponse.json(balance);
   } catch (err) {

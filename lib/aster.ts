@@ -1,16 +1,54 @@
-import { createHmac } from "node:crypto";
 import { z } from "zod";
+import { privateKeyToAccount } from "viem/accounts";
 import { PositionSnapshotSchema, type PositionSnapshot } from "./position";
 
-export type AsterCreds = { baseUrl: string; apiKey: string; apiSecret: string };
+// V3 credentials: main account (`user`) + API wallet (`signer`) + its private key.
+export type AsterCreds = { baseUrl: string; user: string; signer: string; privateKey: string };
 
-export function signQuery(params: Record<string, string | number>, secret: string): string {
-  const query = Object.entries(params)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("&");
-  const signature = createHmac("sha256", secret).update(query).digest("hex");
-  return `${query}&signature=${signature}`;
+// AsterDex V3 EIP-712 signing domain (api-docs V3).
+export const ASTER_DOMAIN = {
+  name: "AsterSignTransaction",
+  version: "1",
+  chainId: 1666,
+  verifyingContract: "0x0000000000000000000000000000000000000000",
+} as const;
+export const ASTER_TYPES = { Message: [{ name: "msg", type: "string" }] } as const;
+
+function paramString(params: Record<string, string | number>): string {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) usp.append(k, String(v));
+  return usp.toString();
 }
+
+let nonceCounter = 0;
+/** Microsecond nonce (ms precision + sub-counter for uniqueness within a ms). */
+export function makeNonce(nowMs: number): number {
+  nonceCounter = (nonceCounter + 1) % 1000;
+  return nowMs * 1000 + nonceCounter;
+}
+
+/**
+ * V3 signed query string. Appends user/signer/nonce, signs the URL-encoded
+ * payload via EIP-712, and returns `<encoded params>&signature=<hex>`.
+ * The signed string is exactly what is sent (minus the appended signature).
+ */
+export async function signV3(
+  creds: AsterCreds,
+  params: Record<string, string | number>,
+  nonceMicros: number,
+): Promise<string> {
+  const msg = paramString({ ...params, nonce: nonceMicros, signer: creds.signer, user: creds.user });
+  const account = privateKeyToAccount(creds.privateKey as `0x${string}`);
+  const signature = await account.signTypedData({
+    domain: ASTER_DOMAIN,
+    types: ASTER_TYPES,
+    primaryType: "Message",
+    message: { msg },
+  });
+  return `${msg}&signature=${signature}`;
+}
+
+type SignedOpts = { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string; nonceMicros?: number };
 
 const RawRowSchema = z.object({
   symbol: z.string(),
@@ -48,14 +86,13 @@ export function normalizePosition(raw: unknown, timestamp: string): PositionSnap
 export async function fetchAsterPosition(
   creds: AsterCreds,
   symbol: string,
-  opts: { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string } = {},
+  opts: SignedOpts = {},
 ): Promise<PositionSnapshot> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const nowMs = opts.nowMs ?? Date.now();
   const timestamp = opts.timestamp ?? new Date(nowMs).toISOString();
-  const query = signQuery({ symbol, timestamp: nowMs }, creds.apiSecret);
-  const url = `${creds.baseUrl}/fapi/v2/positionRisk?${query}`;
-  const res = await fetchImpl(url, { headers: { "X-MBX-APIKEY": creds.apiKey } });
+  const query = await signV3(creds, { symbol }, opts.nonceMicros ?? makeNonce(nowMs));
+  const res = await fetchImpl(`${creds.baseUrl}/fapi/v3/positionRisk?${query}`);
   if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
   const rawData: unknown = await res.json();
   const parsed = RawRowSchema.array().safeParse(rawData);
@@ -86,29 +123,23 @@ export function computeDeployQty(args: {
 
 export type AccountBalance = { walletBalance: number; availableBalance: number; timestamp: string };
 
-const AccountSchema = z.object({
-  totalWalletBalance: z.string(),
-  availableBalance: z.string(),
-});
+// V3 /fapi/v3/balance returns an array of per-asset balances.
+const BalanceSchema = z.array(
+  z.object({ asset: z.string(), balance: z.string(), availableBalance: z.string() }),
+);
 
-export async function fetchAccountBalance(
-  creds: AsterCreds,
-  opts: { fetchImpl?: typeof fetch; nowMs?: number; timestamp?: string } = {},
-): Promise<AccountBalance> {
+export async function fetchAccountBalance(creds: AsterCreds, opts: SignedOpts = {}): Promise<AccountBalance> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const nowMs = opts.nowMs ?? Date.now();
   const timestamp = opts.timestamp ?? new Date(nowMs).toISOString();
-  const query = signQuery({ timestamp: nowMs }, creds.apiSecret);
-  const url = `${creds.baseUrl}/fapi/v2/account?${query}`;
-  const res = await fetchImpl(url, { headers: { "X-MBX-APIKEY": creds.apiKey } });
+  const query = await signV3(creds, {}, opts.nonceMicros ?? makeNonce(nowMs));
+  const res = await fetchImpl(`${creds.baseUrl}/fapi/v3/balance?${query}`);
   if (!res.ok) throw new Error(`AsterDex error: ${res.status}`);
-  const parsed = AccountSchema.safeParse(await res.json());
-  if (!parsed.success) throw new Error("AsterDex returned malformed account response");
-  return {
-    walletBalance: Number(parsed.data.totalWalletBalance),
-    availableBalance: Number(parsed.data.availableBalance),
-    timestamp,
-  };
+  const parsed = BalanceSchema.safeParse(await res.json());
+  if (!parsed.success) throw new Error("AsterDex returned malformed balance response");
+  const usdt = parsed.data.find((a) => a.asset === "USDT");
+  if (!usdt) throw new Error("AsterDex balance: no USDT asset");
+  return { walletBalance: Number(usdt.balance), availableBalance: Number(usdt.availableBalance), timestamp };
 }
 
 export type PriceMove = { pctMove: number; lastPrice: number };
@@ -166,24 +197,21 @@ async function signedPost(
   path: string,
   params: Record<string, string | number>,
   fetchImpl: typeof fetch,
-  nowMs: number,
+  nonceMicros: number,
 ): Promise<Response> {
-  const query = signQuery({ ...params, timestamp: nowMs }, creds.apiSecret);
-  return fetchImpl(`${creds.baseUrl}${path}?${query}`, {
-    method: "POST",
-    headers: { "X-MBX-APIKEY": creds.apiKey },
-  });
+  const query = await signV3(creds, params, nonceMicros);
+  return fetchImpl(`${creds.baseUrl}${path}?${query}`, { method: "POST" });
 }
 
 export async function setLeverage(
   creds: AsterCreds,
   symbol: string,
   leverage: number,
-  opts: { fetchImpl?: typeof fetch; nowMs?: number } = {},
+  opts: { fetchImpl?: typeof fetch; nowMs?: number; nonceMicros?: number } = {},
 ): Promise<void> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const nowMs = opts.nowMs ?? Date.now();
-  const res = await signedPost(creds, "/fapi/v1/leverage", { symbol, leverage }, fetchImpl, nowMs);
+  const nonce = opts.nonceMicros ?? makeNonce(opts.nowMs ?? Date.now());
+  const res = await signedPost(creds, "/fapi/v3/leverage", { symbol, leverage }, fetchImpl, nonce);
   if (!res.ok) throw new Error(`AsterDex leverage error: ${res.status}`);
 }
 
@@ -192,16 +220,16 @@ const OrderResultSchema = z.object({ orderId: z.number(), status: z.string() });
 export async function openOrAddLong(
   creds: AsterCreds,
   args: { symbol: string; quantity: number },
-  opts: { fetchImpl?: typeof fetch; nowMs?: number } = {},
+  opts: { fetchImpl?: typeof fetch; nowMs?: number; nonceMicros?: number } = {},
 ): Promise<{ orderId: number; status: string }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const nowMs = opts.nowMs ?? Date.now();
+  const nonce = opts.nonceMicros ?? makeNonce(opts.nowMs ?? Date.now());
   const res = await signedPost(
     creds,
-    "/fapi/v1/order",
+    "/fapi/v3/order",
     { symbol: args.symbol, side: "BUY", type: "MARKET", quantity: args.quantity },
     fetchImpl,
-    nowMs,
+    nonce,
   );
   if (!res.ok) throw new Error(`AsterDex order error: ${res.status}`);
   const parsed = OrderResultSchema.safeParse(await res.json());

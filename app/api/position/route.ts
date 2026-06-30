@@ -16,7 +16,7 @@ export async function GET() {
     let liveError: string | null = null;
     try {
       live = await fetchAsterPosition(
-        { baseUrl: cfg.asterBaseUrl, apiKey: cfg.asterApiKey, apiSecret: cfg.asterApiSecret },
+        { baseUrl: cfg.asterBaseUrl, user: cfg.asterUser, signer: cfg.asterSigner, privateKey: cfg.asterPrivateKey },
         cfg.asterSymbol,
       );
     } catch (err) {
