@@ -4,7 +4,7 @@ export const RISK_DISCLAIMER =
 // Auto-deploy tunables. Env overrides allow tuning without a redeploy.
 const num = (envKey: string, fallback: number): number => {
   const v = process.env[envKey];
-  const n = v === undefined ? NaN : Number(v);
+  const n = (v === undefined || v === "") ? NaN : Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
 
