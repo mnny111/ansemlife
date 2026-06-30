@@ -79,6 +79,20 @@ describe("GET /api/cron/deploy", () => {
       { symbol: "ANSEMUSDT", quantity: 475 },
     );
     expect(h.appendSnapshot).toHaveBeenCalled();
+    expect(h.fetchAsterPosition).toHaveBeenCalledWith(
+      { baseUrl: "https://x", apiKey: "ro", apiSecret: "ros" },
+      "ANSEMUSDT",
+    );
+  });
+
+  it("skips when computed quantity rounds to zero", async () => {
+    h.acquireLock.mockResolvedValue(true);
+    h.fetchAccountBalance.mockResolvedValue({ availableBalance: 100, walletBalance: 100, timestamp: "t" });
+    h.recentPriceMove.mockResolvedValue({ pctMove: 1, lastPrice: 2 });
+    h.getSymbolStep.mockResolvedValue(1000); // step so large the floored qty is 0
+    const res = await GET(auth("secret"));
+    expect(await res.json()).toEqual({ skipped: "qty-zero" });
+    expect(h.openOrAddLong).not.toHaveBeenCalled();
   });
 
   it("502s on an order failure", async () => {
