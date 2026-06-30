@@ -19,6 +19,7 @@ type State = {
     survivedCount: number;
     history: unknown[];
   };
+  balance?: { walletBalance: number; availableBalance: number; timestamp: string; error?: string };
 };
 
 // Sample row matching a real AsterDex position, shown only with ?preview=1
@@ -51,14 +52,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     setPreview(new URLSearchParams(window.location.search).get("preview") === "1");
-    Promise.allSettled([getJson("/api/rewards"), getJson("/api/price"), getJson("/api/position")])
-      .then(([rewardsResult, priceResult, positionResult]) => {
-        setS({
-          rewards: rewardsResult.status === "fulfilled" ? rewardsResult.value : undefined,
-          price: priceResult.status === "fulfilled" ? priceResult.value : undefined,
-          position: positionResult.status === "fulfilled" ? positionResult.value : undefined,
-        });
+    Promise.allSettled([
+      getJson("/api/rewards"),
+      getJson("/api/price"),
+      getJson("/api/position"),
+      getJson("/api/balance"),
+    ]).then(([rewardsResult, priceResult, positionResult, balanceResult]) => {
+      setS({
+        rewards: rewardsResult.status === "fulfilled" ? rewardsResult.value : undefined,
+        price: priceResult.status === "fulfilled" ? priceResult.value : undefined,
+        position: positionResult.status === "fulfilled" ? positionResult.value : undefined,
+        balance: balanceResult.status === "fulfilled" ? balanceResult.value : undefined,
       });
+    });
   }, []);
 
   const pos = s.position;
@@ -69,7 +75,12 @@ export default function Dashboard() {
     <main className="mx-auto max-w-6xl space-y-10 px-6 py-12">
       <h1 className="font-display text-4xl uppercase tracking-tight sm:text-5xl">Live Dashboard</h1>
 
-      <section className="grid gap-4 sm:grid-cols-3">
+      <section className="grid gap-4 sm:grid-cols-4">
+        <StatCard
+          label="Deposited (Aster)"
+          value={s.balance?.error ? "—" : usd(s.balance?.walletBalance ?? 0)}
+          sub={s.balance && !s.balance.error ? `${usd(s.balance.availableBalance)} free` : undefined}
+        />
         <StatCard label="Rewards collected" value={s.rewards?.error ? "—" : sol(s.rewards?.sol ?? 0)} />
         <StatCard label="Total deployed" value={usd(pos?.deployedTotalUsd ?? 0)} />
         <StatCard
